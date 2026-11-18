@@ -167,6 +167,10 @@ export default function PublicBooking() {
                 <LogoMark size={34} />
                 <span>MeetFlow</span>
               </div>
+              <div className="legal-links">
+                <a href="/privacy" target="_blank" rel="noreferrer">プライバシーポリシー</a>
+                <a href="/terms" target="_blank" rel="noreferrer">利用規約</a>
+              </div>
             </>
           )}
         </aside>

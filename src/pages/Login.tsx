@@ -67,6 +67,10 @@ export default function Login() {
           ログイン
           <ArrowRight size={18} className="btn__arrow" />
         </button>
+        <div className="legal-links">
+          <a href="/privacy">プライバシーポリシー</a>
+          <a href="/terms">利用規約</a>
+        </div>
       </motion.form>
     </div>
   );

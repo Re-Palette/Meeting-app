@@ -14,6 +14,7 @@ const Team = lazy(() => import('./pages/Team'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const PublicBooking = lazy(() => import('./pages/PublicBooking'));
+const Legal = lazy(() => import('./pages/Legal'));
 
 // Warm the route chunks once the app is idle so page transitions never wait on the network.
 const warm = () => {
@@ -54,6 +55,8 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/s/:slug" element={<PublicBooking />} />
+            <Route path="/privacy" element={<Legal kind="privacy" />} />
+            <Route path="/terms" element={<Legal kind="terms" />} />
             <Route element={<Shell />}>
               <Route index element={<Dashboard />} />
               <Route path="pages" element={<EventTypes />} />
