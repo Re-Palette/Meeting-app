@@ -186,6 +186,7 @@ export interface CurrentUser {
   id: string;
   email: string; // Google account email ('' for the owner before Google is connected)
   name: string; // = that user's Settings.ownerName
+  picture: string; // Google profile photo URL ('' if none); refreshed on every Google sign-in/connect
   role: UserRole;
 }
 
@@ -198,6 +199,7 @@ export interface AuthMe {
 export interface Member {
   email: string;
   name: string; // '' until they first sign in
+  picture: string; // Google profile photo URL or ''
   role: UserRole;
   status: 'invited' | 'active'; // active = has signed in at least once
   invitedAt: string;
