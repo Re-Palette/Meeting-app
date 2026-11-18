@@ -1,0 +1,16 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7fa3b3"/><stop offset="0.55" stop-color="#4f7383"/><stop offset="1" stop-color="#2c4a58"/></linearGradient>
+    <radialGradient id="glow" cx="0.72" cy="0.22" r="0.6"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="0.6" stop-color="#d9f6ef"/><stop offset="1" stop-color="#8fe9d6"/></linearGradient>
+    <radialGradient id="b" cx="0.35" cy="0.3" r="0.8"><stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/><stop offset="0.6" stop-color="#cfe9ef" stop-opacity="0.45"/><stop offset="1" stop-color="#9cc4cf" stop-opacity="0.15"/></radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <g transform="translate(256 262) scale(3.3696) translate(-50 -35)">
+    <ellipse cx="50" cy="35" rx="44" ry="17" transform="rotate(-16 50 35)" fill="none" stroke="url(#a)" stroke-width="4"/>
+    <ellipse cx="50" cy="35" rx="30" ry="10" transform="rotate(-16 50 35)" fill="url(#b)" opacity="0.75"/>
+    <circle cx="21" cy="12" r="3.2" fill="#fff"/><circle cx="21" cy="12" r="7" fill="#fff" opacity="0.25"/>
+  </g>
+</svg>

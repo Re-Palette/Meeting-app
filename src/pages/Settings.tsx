@@ -3,6 +3,7 @@ import { RefreshCw, Check, CircleAlert, Link2, LogOut, Plus, Save, Trash2, UserR
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Settings, SettingsInput } from '../../shared/types';
+import { InstallCard } from '../components/InstallCard';
 import { BusyRulesEditor, calendarOptions, ruleError } from '../components/BusyRules';
 import { ErrorState } from '../components/EmptyState';
 import { Skel } from '../components/Skeleton';
@@ -356,6 +357,8 @@ export default function SettingsPage() {
             />
           )}
         </motion.section>
+
+        <InstallCard />
 
         <motion.section className="card form-card settings__logout" variants={item}>
           <div>
