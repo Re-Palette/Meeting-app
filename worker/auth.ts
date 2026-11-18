@@ -53,28 +53,13 @@ export function parseCookies(header: string | null | undefined): Record<string, 
   if (!header) return out;
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    const raw = part.slice(i + 1).trim();
+    try {
+      out[part.slice(0, i).trim()] = decodeURIComponent(raw);
+    } catch {
+      out[part.slice(0, i).trim()] = raw;
+    }
   }
   return out;
-}
-
-// Simple in-memory login throttle (per isolate, best effort).
-const attempts = new Map<string, { count: number; reset: number }>();
-const MAX_ATTEMPTS = 10;
-const WINDOW_MS = 10 * 60 * 1000;
-
-export function loginBlocked(ip: string, now = Date.now()): boolean {
-  const a = attempts.get(ip);
-  if (!a || a.reset < now) return false;
-  return a.count >= MAX_ATTEMPTS;
-}
-
-export function recordLoginFailure(ip: string, now = Date.now()): void {
-  const a = attempts.get(ip);
-  if (!a || a.reset < now) attempts.set(ip, { count: 1, reset: now + WINDOW_MS });
-  else a.count++;
-}
-
-export function clearLoginFailures(ip: string): void {
-  attempts.delete(ip);
 }

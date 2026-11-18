@@ -153,7 +153,7 @@ describe('generateSlots (America/New_York across DST)', () => {
       '2024-11-04T15:00:00.000Z',
     ]);
   });
-  it('uses owner-tz "today" for maxDaysAhead and busy conversion', () => {
+  it('uses owner-tz "today" for maxDaysAhead', () => {
     // 2024-03-10T03:00Z is still Mar 9 22:00 in New York
     const s = generateSlots({
       timezone: 'America/New_York',
@@ -165,6 +165,21 @@ describe('generateSlots (America/New_York across DST)', () => {
     });
     // today = Mar 9 (Sat) -> 09:00 EST already passed, nothing
     expect(s).toEqual([]);
+  });
+});
+
+describe('busy intervals across DST (America/New_York)', () => {
+  it('blocks the 09:00 EDT slot using a UTC busy interval on the DST day', () => {
+    const everyday = { '0': [{ start: '09:00', end: '11:00' }] };
+    const s = generateSlots({
+      timezone: 'America/New_York',
+      now: T('2024-03-01T00:00:00Z'),
+      eventType: et({ availability: everyday }),
+      busy: [{ start: T('2024-03-10T13:00:00Z'), end: T('2024-03-10T14:00:00Z') }], // 09:00-10:00 EDT
+      fromDate: '2024-03-10',
+      toDate: '2024-03-10',
+    });
+    expect(starts(s)).toEqual(['2024-03-10T14:00:00.000Z']);
   });
 });
 

@@ -1,4 +1,4 @@
-import { CalendarClock, Mail, Building2, Video, ExternalLink } from 'lucide-react';
+import { CalendarClock, Mail, Building2, Video, ExternalLink, CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 import type { Booking } from '../../shared/types';
 import { api } from '../lib/api';
@@ -93,6 +93,11 @@ export function BookingDrawer({ booking, onClose, onChanged }: Props) {
               <div className="bdetail__time">{fmtRange(b.start, b.end, tz)}</div>
             </div>
           </div>
+          {b.syncError && (
+            <div className="alert" role="alert" style={{ marginTop: 0, marginBottom: 14 }}>
+              <CircleAlert size={16} /> Googleカレンダーとの同期に失敗しました: {b.syncError}
+            </div>
+          )}
           <dl className="dl">
             <dt>
               <Mail size={14} /> メール

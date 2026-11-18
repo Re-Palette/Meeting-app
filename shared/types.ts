@@ -66,6 +66,7 @@ export interface Booking {
   status: BookingStatus;
   meetUrl: string; // Google Meet link once the calendar event exists, else ''
   googleEventId: string; // '' if not synced to Google
+  syncError: string; // '' or a Japanese message when the Google Calendar sync failed (create/delete)
   createdAt: string;
 }
 

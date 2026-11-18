@@ -1,15 +1,4 @@
-import {
-  addDays,
-  dateMinToUtc,
-  diffDays,
-  getParts,
-  isValidTimezone,
-  localDate,
-  pad,
-  parseDate,
-  weekdayOf,
-  zonedToUtc,
-} from './tz';
+import { getParts, isValidTimezone, zonedToUtc } from './tz';
 
 export interface IcsEvent {
   uid: string;
@@ -61,10 +50,6 @@ const WIN_TZ: Record<string, string> = {
 
 export function unfold(text: string): string[] {
   return text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
-}
-
-function unescapeText(s: string): string {
-  return s.replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1');
 }
 
 function parseLine(line: string): { name: string; params: Record<string, string>; value: string } | null {
@@ -131,13 +116,19 @@ function parseDuration(s: string): number {
 }
 
 const DAY_CODES: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+const DAY = 86400000;
+
+interface ByDay {
+  n: number; // ordinal (0 = every)
+  wd: number;
+}
 
 interface Rule {
   freq: string;
   interval: number;
   count: number | null;
   until: DateInfo | null;
-  byDay: number[];
+  byDay: ByDay[];
   byMonthDay: number[];
 }
 
@@ -148,76 +139,107 @@ function parseRule(rrule: string, defaultTz: string): Rule {
     if (eq > 0) o[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1);
   }
   const until = o.UNTIL ? parseDateValue(o.UNTIL, {}, defaultTz) : null;
+  const byDay: ByDay[] = [];
+  for (const tok of (o.BYDAY ?? '').split(',')) {
+    const m = /^([+-]?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/i.exec(tok.trim());
+    if (m) byDay.push({ n: m[1] ? parseInt(m[1], 10) : 0, wd: DAY_CODES[m[2].toUpperCase()] });
+  }
   return {
     freq: (o.FREQ ?? '').toUpperCase(),
     interval: Math.max(1, parseInt(o.INTERVAL ?? '1', 10) || 1),
     count: o.COUNT ? parseInt(o.COUNT, 10) || null : null,
     until,
-    byDay: (o.BYDAY ?? '')
-      .split(',')
-      .map((s) => DAY_CODES[s.replace(/^[+-]?\d+/, '').toUpperCase()])
-      .filter((n) => n !== undefined),
+    byDay,
     byMonthDay: (o.BYMONTHDAY ?? '')
       .split(',')
       .map((s) => parseInt(s, 10))
-      .filter((n) => n > 0),
+      .filter((n) => Number.isFinite(n) && n !== 0),
   };
 }
 
-const MAX_DAYS = 20000;
+const MAX_ITER_DAYS = 40000;
 
-/** Expand an event into occurrence start times (epoch ms) that may intersect [from, to). */
-function occurrences(ev: RawEvent, start: DateInfo, spanMs: number, opts: IcsOptions): number[] {
-  if (!ev.rrule) return [start.ms];
-  const rule = parseRule(ev.rrule, opts.defaultTz);
-  if (!['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(rule.freq)) return [start.ms];
+/** Days since 1970-01-01 (works for negative values). */
+function dayNum(y: number, m: number, d: number): number {
+  const dt = new Date(0);
+  dt.setUTCFullYear(y, m - 1, d);
+  return Math.floor(dt.getTime() / DAY);
+}
 
-  const tz = start.tz;
-  const sp = getParts(start.ms, tz);
-  const startDate = `${pad(sp.year, 4)}-${pad(sp.month)}-${pad(sp.day)}`;
-  const minutes = sp.hour * 60 + sp.minute;
-  const untilMs = rule.until
-    ? rule.until.allDay
-      ? addMs(rule.until.ms, 86400000 - 1)
-      : rule.until.ms
-    : Infinity;
-  const limit = Math.min(opts.to, untilMs + 1);
-  const byMonthDay = rule.byMonthDay.length ? rule.byMonthDay : [sp.day];
-  const byDay = rule.byDay.length ? rule.byDay : [sp.weekday];
-  const startWeekOffset = (sp.weekday + 6) % 7;
+function ymd(day: number): [number, number, number, number] {
+  const dt = new Date(day * DAY);
+  return [dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate(), dt.getUTCDay()];
+}
+
+function daysInMonth(y: number, m: number): number {
+  return dayNum(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1, 1) - dayNum(y, m, 1);
+}
+
+/**
+ * Day numbers (local calendar days of the event) of occurrences within [loDay, hiDay].
+ * Pure integer arithmetic (no Intl); COUNT is honoured by counting from DTSTART.
+ */
+function occurrenceDays(rule: Rule, startDay: number, sp: { year: number; month: number; day: number; weekday: number }, loDay: number, hiDay: number): number[] {
   const out: number[] = [];
-  let n = 0;
+  const hasByDay = rule.byDay.length > 0;
+  const arith = rule.freq === 'DAILY' && !hasByDay;
+  let last = hiDay;
+  if (rule.count !== null && arith) last = Math.min(last, startDay + (rule.count - 1) * rule.interval);
 
-  for (let i = 0, day = startDate; i < MAX_DAYS; i++, day = addDays(day, 1)) {
-    const occ = dateMinToUtc(day, minutes, tz);
-    if (occ >= limit && occ > start.ms) break;
-    const [y, m, d] = parseDate(day);
+  if (arith) {
+    let d = Math.max(startDay, loDay);
+    d += (rule.interval - ((d - startDay) % rule.interval)) % rule.interval;
+    for (; d <= last; d += rule.interval) out.push(d);
+    return out;
+  }
+
+  const from = rule.count !== null ? startDay : Math.max(startDay, loDay);
+  last = Math.min(last, from + MAX_ITER_DAYS);
+  const startWeekOffset = (sp.weekday + 6) % 7;
+  let n = 0;
+  for (let d = from; d <= last; d++) {
+    const i = d - startDay;
+    const [y, m, dom, wd] = ymd(d);
     let match = false;
     switch (rule.freq) {
       case 'DAILY':
-        match = i % rule.interval === 0;
+        match = i % rule.interval === 0 && rule.byDay.some((b) => b.wd === wd);
         break;
-      case 'WEEKLY':
-        match = byDay.includes(weekdayOf(day)) && Math.floor((i + startWeekOffset) / 7) % rule.interval === 0;
+      case 'WEEKLY': {
+        const days = hasByDay ? rule.byDay.map((b) => b.wd) : [sp.weekday];
+        match = days.includes(wd) && Math.floor((i + startWeekOffset) / 7) % rule.interval === 0;
         break;
-      case 'MONTHLY':
-        match = ((y - sp.year) * 12 + (m - sp.month)) % rule.interval === 0 && byMonthDay.includes(d);
+      }
+      case 'MONTHLY': {
+        if (((y - sp.year) * 12 + (m - sp.month)) % rule.interval !== 0) break;
+        const dim = daysInMonth(y, m);
+        const dayOk = (): boolean =>
+          rule.byDay.some((b) => {
+            if (b.wd !== wd) return false;
+            if (b.n === 0) return true;
+            return b.n > 0 ? Math.ceil(dom / 7) === b.n : Math.ceil((dim - dom + 1) / 7) === -b.n;
+          });
+        const mdOk = (): boolean => rule.byMonthDay.some((x) => (x > 0 ? dom === x : dom === dim + 1 + x));
+        if (hasByDay && rule.byMonthDay.length) match = dayOk() && mdOk();
+        else if (hasByDay) match = dayOk();
+        else if (rule.byMonthDay.length) match = mdOk();
+        else match = dom === sp.day;
         break;
+      }
       case 'YEARLY':
-        match = (y - sp.year) % rule.interval === 0 && m === sp.month && d === sp.day;
+        match = (y - sp.year) % rule.interval === 0 && m === sp.month && dom === sp.day;
         break;
     }
     if (!match) continue;
-    if (occ < start.ms) continue;
     n++;
     if (rule.count !== null && n > rule.count) break;
-    if (occ + spanMs > opts.from) out.push(occ);
+    if (d >= loDay) out.push(d);
   }
   return out;
 }
 
-function addMs(a: number, b: number): number {
-  return a + b;
+function unescapeText(s: string): string {
+  return s.replace(/\\([nN,;\\])/g, (_, c: string) => (c === 'n' || c === 'N' ? '\n' : c));
 }
 
 export function parseIcs(text: string, opts: IcsOptions): IcsEvent[] {
@@ -297,31 +319,61 @@ export function parseIcs(text: string, opts: IcsOptions): IcsEvent[] {
     if (!ev.dtstart) continue;
     if (ev.transp === 'TRANSPARENT' || ev.status === 'CANCELLED') continue;
     const start = ev.dtstart;
+    const tz = start.tz;
+    const sp = getParts(start.ms, tz);
 
     let spanMs: number;
     let allDayDays = 0;
     if (start.allDay) {
       if (ev.dtend) {
-        const a = localDate(start.ms, start.tz);
-        const b = localDate(ev.dtend.ms, start.tz);
-        allDayDays = Math.max(1, diffDays(a, b));
+        const a = dayNum(sp.year, sp.month, sp.day);
+        const e = getParts(ev.dtend.ms, tz);
+        allDayDays = Math.max(1, dayNum(e.year, e.month, e.day) - a);
       } else allDayDays = 1;
-      spanMs = allDayDays * 86400000;
+      spanMs = allDayDays * DAY;
     } else if (ev.dtend) spanMs = ev.dtend.ms - start.ms;
     else if (ev.duration) spanMs = parseDuration(ev.duration);
     else spanMs = 0;
     if (spanMs <= 0) continue;
 
-    const exdates = new Set(ev.exdates.map((d) => d.ms));
-    for (const occ of occurrences(ev, start, spanMs, opts)) {
-      if (exdates.has(occ)) continue;
-      if (!ev.recurrenceId && overridden.has(`${ev.uid}|${occ}`)) continue;
+    const exact = new Set(ev.exdates.filter((d) => !d.allDay).map((d) => d.ms));
+    const exDays = new Set(
+      ev.exdates
+        .filter((d) => d.allDay)
+        .map((d) => {
+          const q = getParts(d.ms, d.tz);
+          return dayNum(q.year, q.month, q.day);
+        }),
+    );
+
+    const emit = (occ: number, day: number): void => {
+      if (exact.has(occ) || exDays.has(day)) return;
+      if (!ev.recurrenceId && overridden.has(`${ev.uid}|${occ}`)) return;
       let end = occ + spanMs;
       if (start.allDay) {
-        end = dateMinToUtc(addDays(localDate(occ, start.tz), allDayDays), 0, start.tz);
+        const [y, m, d] = ymd(day + allDayDays);
+        end = tz === 'UTC' ? Date.UTC(y, m - 1, d) : zonedToUtc(y, m, d, 0, 0, tz);
       }
-      if (end <= opts.from || occ >= opts.to) continue;
+      if (end <= opts.from || occ >= opts.to) return;
       result.push({ uid: ev.uid, title: ev.summary, start: occ, end, allDay: start.allDay });
+    };
+
+    const startDay = dayNum(sp.year, sp.month, sp.day);
+    const rule = ev.rrule ? parseRule(ev.rrule, opts.defaultTz) : null;
+    if (!rule || !['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(rule.freq)) {
+      emit(start.ms, startDay);
+      continue;
+    }
+    const untilMs = rule.until ? (rule.until.allDay ? rule.until.ms + DAY - 1 : rule.until.ms) : Infinity;
+    const loDay = Math.floor((opts.from - spanMs) / DAY) - 2;
+    let hiDay = Math.ceil(opts.to / DAY) + 2;
+    if (Number.isFinite(untilMs)) hiDay = Math.min(hiDay, Math.ceil(untilMs / DAY) + 2);
+    const minutes = sp.hour * 60 + sp.minute;
+    for (const day of occurrenceDays(rule, startDay, sp, loDay, hiDay)) {
+      const [y, m, d] = ymd(day);
+      const occ = tz === 'UTC' ? Date.UTC(y, m - 1, d, sp.hour, sp.minute) : zonedToUtc(y, m, d, Math.floor(minutes / 60), minutes % 60, tz);
+      if (occ > untilMs) continue;
+      emit(occ, day);
     }
   }
   return result.sort((a, b) => a.start - b.start);

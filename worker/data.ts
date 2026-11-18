@@ -1,7 +1,8 @@
 import type { Booking, CalendarEvent, EventType, Settings } from '../shared/types';
 import type { Env } from './env';
+import { HttpError } from './env';
 import { getAccessToken, getTokens, freeBusy, listEvents } from './google';
-import { parseIcs } from './ics';
+import { type IcsEvent, parseIcs } from './ics';
 import { type Interval } from './tz';
 
 type Row = Record<string, unknown>;
@@ -54,6 +55,7 @@ export function rowToBooking(r: Row): Booking {
     answers: parseJson(r.answers, {}),
     status: r.status as Booking['status'],
     meetUrl: r.meet_url as string,
+    syncError: (r.sync_error as string) ?? '',
     googleEventId: r.google_event_id as string,
     createdAt: r.created_at as string,
   };
@@ -65,7 +67,7 @@ export async function loadSettings(env: Env): Promise<Settings> {
   return {
     ownerName: (r?.owner_name as string) ?? '',
     timezone: (r?.timezone as string) ?? 'Asia/Tokyo',
-    googleConnected: !!t,
+    googleConnected: !!t && !t.broken, // a broken (revoked) connection shows as disconnected; email stays for context
     googleEmail: t?.email ?? '',
     googleCalendarIds: parseJson<string[]>(r?.google_calendar_ids, ['primary']),
     googleTargetCalendarId: (r?.google_target_calendar_id as string) ?? 'primary',
@@ -73,38 +75,64 @@ export async function loadSettings(env: Env): Promise<Settings> {
   };
 }
 
-// ---- ICS fetching with ~5 minute in-memory cache ----
-const icsCache = new Map<string, { at: number; text: string }>();
-const ICS_TTL = 5 * 60 * 1000;
+export const CAL_UNAVAILABLE = 'カレンダーを確認できませんでした。しばらくしてからお試しください';
 
-async function fetchIcsText(url: string): Promise<string | null> {
-  const hit = icsCache.get(url);
-  if (hit && Date.now() - hit.at < ICS_TTL) return hit.text;
-  try {
+// ---- ICS: raw text and parsed events cached per URL for ~5 minutes ----
+interface IcsEntry {
+  at: number;
+  text: string;
+  tz: string;
+  from: number;
+  to: number;
+  events: IcsEvent[];
+}
+const icsCache = new Map<string, IcsEntry>();
+const ICS_TTL = 5 * 60 * 1000;
+const DAY_MS = 86400000;
+
+/** Throws when the feed cannot be fetched. */
+async function icsParsed(url: string, tz: string, from: number, to: number, now = Date.now()): Promise<IcsEvent[]> {
+  let e = icsCache.get(url);
+  if (!e || now - e.at >= ICS_TTL) {
     const res = await fetch(url.replace(/^webcal:/i, 'https:'), { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return hit?.text ?? null;
-    const text = await res.text();
-    icsCache.set(url, { at: Date.now(), text });
-    return text;
-  } catch {
-    return hit?.text ?? null;
+    if (!res.ok) throw new Error(`ics ${res.status}`);
+    e = { at: now, text: await res.text(), tz: '', from: 0, to: 0, events: [] };
+    icsCache.set(url, e);
   }
+  if (e.tz !== tz || from < e.from || to > e.to) {
+    // Parse a wide window once so later queries within it are served from the parsed cache.
+    const wFrom = Math.min(from, now - 35 * DAY_MS);
+    const wTo = Math.max(to, now + 400 * DAY_MS);
+    e.events = parseIcs(e.text, { from: wFrom, to: wTo, defaultTz: tz });
+    e.tz = tz;
+    e.from = wFrom;
+    e.to = wTo;
+  }
+  return e.events.filter((x) => x.end > from && x.start < to);
 }
 
-export async function icsEvents(settings: Settings, from: number, to: number): Promise<CalendarEvent[]> {
+export function resetIcsCache(): void {
+  icsCache.clear();
+}
+
+/** strict: a failing feed throws instead of being treated as "no events". */
+export async function icsEvents(settings: Settings, from: number, to: number, strict = false): Promise<CalendarEvent[]> {
   const lists = await Promise.all(
     settings.icsUrls.map(async (url, i) => {
-      const text = await fetchIcsText(url);
-      if (!text) return [];
-      return parseIcs(text, { from, to, defaultTz: settings.timezone }).map(
-        (e, j): CalendarEvent => ({
-          id: `ics:${i}:${e.uid || j}:${e.start}`,
-          title: e.title || '予定あり',
-          start: new Date(e.start).toISOString(),
-          end: new Date(e.end).toISOString(),
-          source: 'ics',
-        }),
-      );
+      try {
+        return (await icsParsed(url, settings.timezone, from, to)).map(
+          (e, j): CalendarEvent => ({
+            id: `ics:${i}:${e.uid || j}:${e.start}`,
+            title: e.title || '予定あり',
+            start: new Date(e.start).toISOString(),
+            end: new Date(e.end).toISOString(),
+            source: 'ics',
+          }),
+        );
+      } catch (err) {
+        if (strict) throw err;
+        return [];
+      }
     }),
   );
   return lists.flat();
@@ -120,20 +148,76 @@ export async function bookingRows(env: Env, from: number, to: number, statuses: 
   return results.map(rowToBooking);
 }
 
+/** Google freebusy + ICS (the parts that need network). Strict mode throws on any failure. */
+async function externalBusy(env: Env, settings: Settings, from: number, to: number, strict: boolean): Promise<Interval[]> {
+  const tokens = await getTokens(env);
+  const google = (async (): Promise<Interval[]> => {
+    if (!tokens || !settings.googleCalendarIds.length) return [];
+    if (tokens.broken) {
+      if (strict) throw new Error('google connection broken');
+      return [];
+    }
+    try {
+      return await freeBusy(env, settings.googleCalendarIds, from, to);
+    } catch (e) {
+      if (strict) throw e;
+      return [];
+    }
+  })();
+  const ics = icsEvents(settings, from, to, strict);
+  const [g, i] = await Promise.all([google, ics]);
+  return [...g, ...i.map((e) => ({ start: Date.parse(e.start), end: Date.parse(e.end) }))];
+}
+
+function hashStr(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+/** Cache API (60s) around externalBusy. Only successful results are cached. */
+async function cachedExternalBusy(env: Env, settings: Settings, from: number, to: number): Promise<Interval[]> {
+  const v = hashStr(JSON.stringify([settings.googleCalendarIds, settings.icsUrls, settings.timezone, settings.googleConnected]));
+  const key = new Request(`https://cache.meetflow.invalid/busy?from=${from}&to=${to}&v=${v}`);
+  const cache = typeof caches !== 'undefined' ? (caches as unknown as { default: Cache }).default : null;
+  try {
+    const hit = await cache?.match(key);
+    if (hit) return (await hit.json()) as Interval[];
+  } catch {
+    /* cache unavailable */
+  }
+  const busy = await externalBusy(env, settings, from, to, true);
+  try {
+    await cache?.put(key, new Response(JSON.stringify(busy), { headers: { 'Cache-Control': 'max-age=60' } }));
+  } catch {
+    /* ignore */
+  }
+  return busy;
+}
+
+export interface BusyOptions {
+  /** Fail with 503 when Google or an ICS feed cannot be read (used for public booking). */
+  strict?: boolean;
+  /** Use the 60s Cache API entry for Google+ICS (bookings are always read fresh). */
+  cache?: boolean;
+}
+
 /** All busy intervals used by the slot engine: Google freebusy, ICS feeds, pending/confirmed bookings. */
-export async function getBusy(env: Env, settings: Settings, from: number, to: number): Promise<Interval[]> {
-  const [google, ics, bookings] = await Promise.all([
-    settings.googleConnected && settings.googleCalendarIds.length
-      ? freeBusy(env, settings.googleCalendarIds, from, to).catch(() => [] as Interval[])
-      : Promise.resolve([] as Interval[]),
-    icsEvents(settings, from, to).catch(() => [] as CalendarEvent[]),
+export async function getBusy(env: Env, settings: Settings, from: number, to: number, opts: BusyOptions = {}): Promise<Interval[]> {
+  const strict = !!opts.strict;
+  const [external, bookings] = await Promise.all([
+    (async () => {
+      try {
+        return opts.cache ? await cachedExternalBusy(env, settings, from, to) : await externalBusy(env, settings, from, to, strict);
+      } catch (e) {
+        console.error('busy source failed', e);
+        if (strict) throw new HttpError(503, CAL_UNAVAILABLE);
+        return [] as Interval[];
+      }
+    })(),
     bookingRows(env, from, to, ['pending', 'confirmed']),
   ]);
-  return [
-    ...google,
-    ...ics.map((e) => ({ start: Date.parse(e.start), end: Date.parse(e.end) })),
-    ...bookings.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) })),
-  ];
+  return [...external, ...bookings.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }))];
 }
 
 /** Calendar view: Google events (real titles, falls back to freebusy), ICS, bookings. */
@@ -142,7 +226,13 @@ export async function getCalendarEvents(env: Env, settings: Settings, from: numb
   const own = new Set(bookings.map((b) => b.googleEventId).filter(Boolean));
   const out: CalendarEvent[] = [];
 
-  if (settings.googleConnected && (await getAccessToken(env))) {
+  let gToken: string | null = null;
+  try {
+    gToken = settings.googleConnected ? await getAccessToken(env) : null;
+  } catch {
+    gToken = null;
+  }
+  if (gToken) {
     const perCal = await Promise.all(
       settings.googleCalendarIds.map(async (calId) => {
         try {
