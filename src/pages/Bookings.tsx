@@ -27,7 +27,7 @@ async function load(tab: Tab): Promise<Booking[]> {
     case 'pending':
       return api.bookings({ status: 'pending', scope: 'all' });
     case 'past':
-      return (await api.bookings({ status: 'confirmed', scope: 'past' })).reverse();
+      return api.bookings({ status: 'confirmed', scope: 'past' });
     case 'cancelled': {
       const [c, d] = await Promise.all([api.bookings({ status: 'cancelled', scope: 'all' }), api.bookings({ status: 'declined', scope: 'all' })]);
       return [...c, ...d].sort((a, b) => b.start.localeCompare(a.start));

@@ -41,6 +41,18 @@ function windowsFor(av: WeeklyAvailability, weekday: number): [number, number][]
   return out.sort((a, b) => a[0] - b[0]);
 }
 
+/** `merged` is sorted and non-overlapping: binary-search the first block ending after `lo`. */
+function overlapsBusy(merged: Interval[], lo: number, hi: number): boolean {
+  let a = 0;
+  let b = merged.length;
+  while (a < b) {
+    const mid = (a + b) >> 1;
+    if (merged[mid].end <= lo) a = mid + 1;
+    else b = mid;
+  }
+  return a < merged.length && merged[a].start < hi;
+}
+
 export function generateSlots(p: SlotParams): Slot[] {
   const { eventType: et, busy, now, timezone: tz } = p;
   const today = localDate(now, tz);
@@ -57,16 +69,18 @@ export function generateSlots(p: SlotParams): Slot[] {
 
   for (let guard = 0; day <= end && guard < 400; guard++, day = addDays(day, 1)) {
     const seen = new Set<number>();
+    // Resolve the tz offset once per day; fall back to per-slot resolution only on DST-change days.
+    const dayStart = dateMinToUtc(day, 0, tz);
+    const uniform = dateMinToUtc(day, 24 * 60, tz) - dayStart === 24 * 60 * MIN;
+    const at = (m: number) => (uniform ? dayStart + m * MIN : dateMinToUtc(day, m, tz));
     for (const [ws, we] of windowsFor(et.availability, weekdayOf(day))) {
-      const windowEnd = dateMinToUtc(day, we, tz);
+      const windowEnd = at(we);
       for (let m = ws; m + et.durationMin <= we; m += step) {
-        const start = dateMinToUtc(day, m, tz);
+        const start = at(m);
         const slotEnd = start + dur;
         if (slotEnd > windowEnd) continue;
         if (start < earliest || seen.has(start)) continue;
-        const lo = start - bufB;
-        const hi = slotEnd + bufA;
-        if (merged.some((b) => b.start < hi && b.end > lo)) continue;
+        if (overlapsBusy(merged, start - bufB, slotEnd + bufA)) continue;
         seen.add(start);
         slots.push({ start: new Date(start).toISOString(), end: new Date(slotEnd).toISOString() });
       }

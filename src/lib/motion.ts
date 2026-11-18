@@ -8,11 +8,6 @@ export const pageVariants: Variants = {
   exit: { opacity: 0, x: -20, filter: 'blur(4px)', transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } },
 };
 
-export const stagger: Variants = {
-  initial: {},
-  enter: { transition: { staggerChildren: 0.06 } },
-};
-
 export const item: Variants = {
   initial: { opacity: 0, y: 18, scale: 0.985 },
   enter: { opacity: 1, y: 0, scale: 1, transition: spring },
