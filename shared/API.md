@@ -10,7 +10,22 @@ All `/api/*` routes except `/api/auth/*`, `/api/public/*` and `/api/google/callb
 |---|---|---|---|
 | POST | /api/auth/login | `{password}` | `{ok:true}` + cookie |
 | POST | /api/auth/logout | – | `{ok:true}` |
-| GET | /api/auth/me | – | `{authenticated:boolean}` |
+| GET | /api/auth/me | – | `AuthMe` |
+| GET | /api/auth/google | – | 302 → Google sign-in (scopes: openid email profile calendar.events calendar.readonly) |
+| GET | /api/google/callback | `?code&state` | login flow: 302 → `/` (or `/login?error=not_invited` / `?error=google`); connect flow: 302 → `/settings?google=connected` |
+
+### Multi-user
+- Users: the **owner** (the existing single owner; password login keeps working and maps to the owner) and **members** invited by email. Anyone else signing in with Google is rejected (`not_invited`).
+- Google sign-in also connects that user's Google Calendar (same tokens). If the Google email equals the owner's connected Google email, it signs in as the owner.
+- Every owner-side endpoint below is scoped to the signed-in user: settings, event types, bookings, dashboard, analytics, contacts, calendar, google/*. A user can never read or change another user's data (404, not 403, for other users' ids).
+- Public `/s/:slug` uses the calendar and settings of the user who owns that event type. Slugs stay globally unique.
+- Logout bumps only the current user's session version.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | /api/members | – (owner only, else 403) | `Member[]` (owner first) |
+| POST | /api/members | `{email}` (owner only) | `Member` (409 if exists) |
+| DELETE | /api/members/:email | – (owner only; cannot remove owner) | `{ok:true}` — also deletes that member's data and revokes their sessions |
 
 ## Owner
 | Method | Path | Body / Query | Response |

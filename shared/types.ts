@@ -176,3 +176,30 @@ export interface BookingRequest {
 export interface ApiError {
   error: string; // human readable Japanese message
 }
+
+// ---- multi-user (owner + invited members) ----
+
+export type UserRole = 'owner' | 'member';
+
+/** The signed-in user. Every owner-side endpoint is scoped to this user's own data. */
+export interface CurrentUser {
+  id: string;
+  email: string; // Google account email ('' for the owner before Google is connected)
+  name: string; // = that user's Settings.ownerName
+  role: UserRole;
+}
+
+export interface AuthMe {
+  authenticated: boolean;
+  user: CurrentUser | null;
+}
+
+/** Owner-only: people allowed to sign in with Google. */
+export interface Member {
+  email: string;
+  name: string; // '' until they first sign in
+  role: UserRole;
+  status: 'invited' | 'active'; // active = has signed in at least once
+  invitedAt: string;
+  lastLoginAt: string; // '' if never
+}
