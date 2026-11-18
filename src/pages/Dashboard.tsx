@@ -17,6 +17,7 @@ export default function Dashboard() {
   const { ownerName } = useApp();
   const { data, error, reload } = useAsync(() => api.dashboard(), []);
   const [open, setOpen] = useState<Booking | null>(null);
+  const [weekKey, setWeekKey] = useState(0);
   const name = givenName(data?.ownerName || ownerName || '');
 
   return (
@@ -31,7 +32,7 @@ export default function Dashboard() {
           <StatCards stats={data?.stats} />
           <div className="dash__row dash__row--mid">
             <UpcomingMeetings items={data?.upcoming} onOpen={setOpen} />
-            <WeekSchedule />
+            <WeekSchedule refreshKey={weekKey} />
           </div>
           <div className="dash__row dash__row--bottom">
             <PagesTable items={data?.eventTypes} />
@@ -39,7 +40,10 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      <BookingDrawer booking={open} onClose={() => setOpen(null)} onChanged={() => reload()} />
+      <BookingDrawer booking={open} onClose={() => setOpen(null)} onChanged={() => {
+          reload();
+          setWeekKey((k) => k + 1);
+        }} />
     </>
   );
 }

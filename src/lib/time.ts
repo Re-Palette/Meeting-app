@@ -136,6 +136,7 @@ export function givenName(full: string) {
 
 export function relativeDays(iso: string) {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (diff < -1) return `${-diff}日後`;
   if (diff <= 0) return '今日';
   if (diff === 1) return '昨日';
   if (diff < 30) return `${diff}日前`;
@@ -152,11 +153,10 @@ export const LOCATION_LABEL: Record<LocationType, string> = {
 };
 
 export function durationLabel(min: number) {
-  if (min < 60 || min % 60 !== 0) return `${min}分`;
-  return `${min / 60}時間`;
+  return `${min}分`;
 }
 
-export function slugify(input: string) {
+export function slugify(input: string, fallback = Math.random().toString(36).slice(2, 8)) {
   const ascii = input
     .normalize('NFKD')
     .toLowerCase()
@@ -166,5 +166,5 @@ export function slugify(input: string) {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   if (ascii.length >= 3) return ascii.slice(0, 40);
-  return `${ascii ? ascii + '-' : ''}${Math.random().toString(36).slice(2, 8)}`;
+  return `${ascii ? ascii + '-' : ''}${fallback}`;
 }

@@ -22,6 +22,15 @@ const DEFS: Def[] = [
   { key: 'freeHoursThisWeek', label: '今週の空き時間', icon: Clock, tone: 'purple', color: '#8a86f0', unit: 'h', abs: true },
 ];
 
+/** Light moving average so sparklines read as a trend rather than noise. */
+function smooth(xs: number[]) {
+  if (xs.length < 4) return xs;
+  return xs.map((_, i) => {
+    const w = xs.slice(Math.max(0, i - 1), i + 2);
+    return w.reduce((a, b) => a + b, 0) / w.length;
+  });
+}
+
 function Delta({ s, abs }: { s: Stat; abs?: boolean }) {
   const up = s.delta >= 0;
   const txt = abs ? `${up ? '+' : ''}${s.delta.toFixed(1)}h` : `${up ? '+' : ''}${Math.round(s.delta)}%`;
@@ -62,7 +71,7 @@ export function StatCards({ stats }: { stats?: DashboardData['stats'] }) {
             </div>
             {s && (
               <div className="stat__spark">
-                <Sparkline data={s.series} color={d.color} width={180} height={64} />
+                <Sparkline data={smooth(s.series)} color={d.color} width={180} height={64} />
               </div>
             )}
           </motion.div>

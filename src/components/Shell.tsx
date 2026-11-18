@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useState, type ReactElement } from 'react';
+import { Suspense, useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Navigate, useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import type { Settings } from '../../shared/types';
 import { api, UNAUTHORIZED_EVENT } from '../lib/api';
@@ -75,7 +75,15 @@ export function Shell() {
                 animate="enter"
                 exit="exit"
               >
-                <Frozen>{outlet}</Frozen>
+                <Suspense
+                  fallback={
+                    <div className="shell__boot">
+                      <span className="spinner" />
+                    </div>
+                  }
+                >
+                  <Frozen>{outlet}</Frozen>
+                </Suspense>
               </motion.div>
             </AnimatePresence>
           )}

@@ -49,7 +49,7 @@ export function UpcomingMeetings({ items, onOpen }: { items?: Booking[]; onOpen:
                   <br />({WEEKDAYS_JA[z.weekday]})
                 </span>
                 <span className="meeting__time">{fmtRange(b.start, b.end, tz)}</span>
-                <span className="meeting__info">
+                <span className="meeting__info" title={`${b.eventTitle} — ${attendeeLine(b)}`}>
                   <span className="meeting__title">
                     {b.eventTitle}
                     {b.status === 'pending' && <span className="badge badge--pending meeting__badge">承認待ち</span>}

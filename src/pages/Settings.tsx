@@ -1,0 +1,369 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { RefreshCw, Check, CircleAlert, Link2, LogOut, Plus, Save, Trash2, UserRound, ArrowRight, Unplug } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { Settings, SettingsInput } from '../../shared/types';
+import { ErrorState } from '../components/EmptyState';
+import { Skel } from '../components/Skeleton';
+import { useToast } from '../components/Toast';
+import { TopBar } from '../components/TopBar';
+import { api, type GoogleCalendar } from '../lib/api';
+import { useApp } from '../lib/appContext';
+import { item } from '../lib/motion';
+import { tzLabel } from '../lib/time';
+
+function GoogleLogo({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden>
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
+}
+
+const FALLBACK_TZ = ['Asia/Tokyo', 'Asia/Seoul', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Kolkata', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney', 'Pacific/Auckland', 'UTC'];
+
+function allTimezones(): string[] {
+  try {
+    const fn = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (fn) return fn('timeZone');
+  } catch {
+    /* ignore */
+  }
+  return FALLBACK_TZ;
+}
+
+export default function SettingsPage() {
+  const { settings: ctxSettings, setSettings: setCtx } = useApp();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [settings, setSettings] = useState<Settings>();
+  const [form, setForm] = useState<SettingsInput>();
+  const [error, setError] = useState<Error>();
+  const [saving, setSaving] = useState(false);
+  const [cals, setCals] = useState<GoogleCalendar[]>();
+  const [calsError, setCalsError] = useState('');
+  const [gError, setGError] = useState('');
+  const [gBusy, setGBusy] = useState(false);
+  const [newIcs, setNewIcs] = useState('');
+  const tzs = useMemo(allTimezones, []);
+
+  const load = () => {
+    setError(undefined);
+    api
+      .settings()
+      .then((s) => {
+        setSettings(s);
+        setCtx(s);
+        const { googleConnected: _g, googleEmail: _e, ...rest } = s;
+        void _g;
+        void _e;
+        setForm(rest);
+      })
+      .catch(setError);
+  };
+  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const googleHandled = useRef(false);
+  useEffect(() => {
+    const g = params.get('google');
+    if (!g || googleHandled.current) return;
+    googleHandled.current = true;
+    if (g === 'connected') toast('Google カレンダーと連携しました');
+    else toast('Google カレンダーとの連携に失敗しました', 'error');
+    const p = new URLSearchParams(params);
+    p.delete('google');
+    setParams(p, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!settings?.googleConnected) return;
+    api
+      .googleCalendars()
+      .then(setCals)
+      .catch((e: Error) => setCalsError(e.message));
+  }, [settings?.googleConnected]);
+
+  const dirty = useMemo(() => {
+    if (!form || !ctxSettings) return false;
+    return (
+      form.ownerName !== ctxSettings.ownerName ||
+      form.timezone !== ctxSettings.timezone ||
+      form.googleTargetCalendarId !== ctxSettings.googleTargetCalendarId ||
+      JSON.stringify(form.googleCalendarIds) !== JSON.stringify(ctxSettings.googleCalendarIds) ||
+      JSON.stringify(form.icsUrls) !== JSON.stringify(ctxSettings.icsUrls)
+    );
+  }, [form, ctxSettings]);
+
+  const save = async () => {
+    if (!form) return;
+    setSaving(true);
+    try {
+      const s = await api.saveSettings(form);
+      setSettings(s);
+      setCtx(s);
+      toast('設定を保存しました');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const connect = async () => {
+    setGBusy(true);
+    setGError('');
+    try {
+      const { url } = await api.googleAuthUrl();
+      window.location.href = url;
+    } catch (e) {
+      setGError((e as Error).message);
+      setGBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    if (!window.confirm('Google カレンダーとの連携を解除しますか？')) return;
+    setGBusy(true);
+    try {
+      await api.googleDisconnect();
+      toast('連携を解除しました');
+      setCals(undefined);
+      load();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setGBusy(false);
+    }
+  };
+
+  const addIcs = () => {
+    const u = newIcs.trim().replace(/^webcal:\/\//i, 'https://');
+    if (!form || !u) return;
+    if (!/^https?:\/\//i.test(u)) {
+      toast('http(s):// または webcal:// で始まるURLを入力してください', 'error');
+      return;
+    }
+    if (form.icsUrls.includes(u)) return;
+    setForm({ ...form, icsUrls: [...form.icsUrls, u] });
+    setNewIcs('');
+  };
+
+  if (error)
+    return (
+      <>
+        <TopBar title="設定" />
+        <div className="card">
+          <ErrorState error={error} onRetry={load} />
+        </div>
+      </>
+    );
+
+  return (
+    <>
+      <TopBar title="設定" subtitle="プロフィールとカレンダー連携を管理します。" />
+      <div className="settings">
+        <motion.section className="card form-card" variants={item}>
+          <h2 className="form-card__title">
+            <UserRound size={20} /> プロフィール
+          </h2>
+          {!form ? (
+            <Skel h={100} />
+          ) : (
+            <div className="form-grid">
+              <label className="field">
+                <span className="field__label">表示名</span>
+                <input className="input" value={form.ownerName} onChange={(e) => setForm({ ...form, ownerName: e.target.value })} placeholder="鈴木 陽大" />
+                <span className="field__hint">ホームのあいさつと公開予約ページに表示されます。</span>
+              </label>
+              <label className="field">
+                <span className="field__label">タイムゾーン</span>
+                <select className="select" value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
+                  {(tzs.includes(form.timezone) ? tzs : [form.timezone, ...tzs]).map((t) => (
+                    <option key={t} value={t}>
+                      {tzLabel(t)}
+                    </option>
+                  ))}
+                </select>
+                <span className="field__hint">受付時間はこのタイムゾーンで解釈されます。</span>
+              </label>
+            </div>
+          )}
+        </motion.section>
+
+        <motion.section className="card form-card gcal" variants={item}>
+          <h2 className="form-card__title">
+            <GoogleLogo /> Google カレンダー連携
+            {settings?.googleConnected && (
+              <span className="badge badge--live" style={{ marginLeft: 'auto' }}>
+                <Check size={13} /> 連携中
+              </span>
+            )}
+          </h2>
+          {!settings || !form ? (
+            <Skel h={90} />
+          ) : !settings.googleConnected ? (
+            <div className="gcal__connect">
+              <p>
+                Google カレンダーと連携すると、既存の予定と重なる時間を自動的に予約不可にし、確定した予定を Google Meet リンク付きでカレンダーへ登録します。
+              </p>
+              <button className="btn btn--dark btn--lg" onClick={connect} disabled={gBusy}>
+                {gBusy ? <span className="spinner spinner--sm" /> : <RefreshCw size={18} />}
+                Google カレンダーと連携する
+                <ArrowRight size={16} className="btn__arrow" />
+              </button>
+              <AnimatePresence>
+                {gError && (
+                  <motion.p className="alert" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                    <CircleAlert size={16} /> {gError}
+                  </motion.p>
+                )}
+              </AnimatePresence>
+            </div>
+          ) : (
+            <div className="gcal__connected">
+              <div className="gcal__account">
+                <GoogleLogo size={28} />
+                <div>
+                  <b>{settings.googleEmail}</b>
+                  <small>このアカウントのカレンダーを参照しています</small>
+                </div>
+                <button className="btn btn--glass btn--sm" onClick={disconnect} disabled={gBusy} style={{ marginLeft: 'auto' }}>
+                  <Unplug size={15} /> 連携を解除
+                </button>
+              </div>
+              <div className="form-grid">
+                <div className="field">
+                  <span className="field__label">空き時間の確認に使うカレンダー</span>
+                  {calsError ? (
+                    <p className="alert">
+                      <CircleAlert size={16} /> {calsError}
+                    </p>
+                  ) : !cals ? (
+                    <Skel h={90} />
+                  ) : (
+                    <div className="checklist">
+                      {cals.map((c) => {
+                        const checked = form.googleCalendarIds.includes(c.id) || (c.primary && form.googleCalendarIds.includes('primary'));
+                        return (
+                          <label key={c.id} className={`check${checked ? ' is-on' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const ids = form.googleCalendarIds.filter((x) => x !== c.id && !(c.primary && x === 'primary'));
+                                setForm({ ...form, googleCalendarIds: e.target.checked ? [...ids, c.primary ? 'primary' : c.id] : ids });
+                              }}
+                            />
+                            <span className="check__box">
+                              <Check size={13} strokeWidth={3} />
+                            </span>
+                            <span className="check__label">{c.summary}</span>
+                            {c.primary && <span className="badge badge--off">メイン</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <label className="field">
+                  <span className="field__label">予定を登録するカレンダー</span>
+                  <select className="select" value={form.googleTargetCalendarId} onChange={(e) => setForm({ ...form, googleTargetCalendarId: e.target.value })}>
+                    {(cals ?? [{ id: 'primary', summary: 'メインカレンダー', primary: true }]).map((c) => (
+                      <option key={c.id} value={c.primary ? 'primary' : c.id}>
+                        {c.summary}
+                        {c.primary ? '（メイン）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="field__hint">確定した予定は Google Meet リンク付きでこのカレンダーに追加されます。</span>
+                </label>
+              </div>
+            </div>
+          )}
+        </motion.section>
+
+        <motion.section className="card form-card" variants={item}>
+          <h2 className="form-card__title">
+            <Link2 size={20} /> その他のカレンダー（ICS）
+          </h2>
+          <p className="field__hint" style={{ marginBottom: 14, lineHeight: 1.7 }}>
+            iCloud や Outlook のカレンダーを「予定あり」として取り込めます。iCloud はカレンダー共有の「公開カレンダー」のURL、Outlook は「予定表の公開」で発行される ICS
+            のURL（非公開アドレス）を貼り付けてください。URLは第三者に知られないよう注意してください。
+          </p>
+          {!form ? (
+            <Skel h={60} />
+          ) : (
+            <>
+              <ul className="ics">
+                <AnimatePresence initial={false}>
+                  {form.icsUrls.map((u) => (
+                    <motion.li key={u} layout initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                      <span className="pill-link">
+                        <span className="pill-link__text">{u}</span>
+                      </span>
+                      <button className="icon-btn icon-btn--sm danger" aria-label="削除" onClick={() => setForm({ ...form, icsUrls: form.icsUrls.filter((x) => x !== u) })}>
+                        <Trash2 size={16} />
+                      </button>
+                    </motion.li>
+                  ))}
+                </AnimatePresence>
+              </ul>
+              <form
+                className="ics__add"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  addIcs();
+                }}
+              >
+                <input className="input" value={newIcs} onChange={(e) => setNewIcs(e.target.value)} placeholder="https://p01-caldav.icloud.com/published/2/..." />
+                <button className="btn btn--glass" type="submit" disabled={!newIcs.trim()}>
+                  <Plus size={16} /> 追加
+                </button>
+              </form>
+            </>
+          )}
+        </motion.section>
+
+        <motion.section className="card form-card settings__logout" variants={item}>
+          <div>
+            <b>ログアウト</b>
+            <small>この端末からログアウトします。</small>
+          </div>
+          <button
+            className="btn btn--danger"
+            onClick={async () => {
+              await api.logout().catch(() => {});
+              navigate('/login', { replace: true });
+            }}
+          >
+            <LogOut size={16} /> ログアウト
+          </button>
+        </motion.section>
+      </div>
+
+      <AnimatePresence>
+        {dirty && (
+          <motion.div
+            className="savebar"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+          >
+            <span>未保存の変更があります</span>
+            <button className="btn btn--ghost btn--sm" onClick={load}>
+              元に戻す
+            </button>
+            <button className="btn btn--primary" onClick={save} disabled={saving}>
+              {saving ? <span className="spinner spinner--sm" /> : <Save size={16} />} 保存する
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}

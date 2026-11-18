@@ -18,7 +18,7 @@ export function initials(name: string) {
   if (!t) return '?';
   const parts = t.split(/[\s　]+/);
   if (/^[\x00-\x7F]+$/.test(t)) return parts.slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
-  return parts[0].slice(0, 1) + (parts[1] ? parts[1].slice(0, 1) : '');
+  return parts[0].slice(0, 1);
 }
 
 export function Avatar({ name, size = 44, person = false }: { name: string; size?: number; person?: boolean }) {

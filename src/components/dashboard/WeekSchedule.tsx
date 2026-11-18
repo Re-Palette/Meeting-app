@@ -18,7 +18,7 @@ export function weekStart(today: YMD, offset: number): YMD {
   return ymdAdd(today, toMon + offset * 7);
 }
 
-export function WeekSchedule() {
+export function WeekSchedule({ refreshKey = 0 }: { refreshKey?: number }) {
   const { tz } = useApp();
   const [offset, setOffset] = useState(0);
   const [dir, setDir] = useState(1);
@@ -29,7 +29,7 @@ export function WeekSchedule() {
   const from = zonedToUtc(mon.y, mon.m, mon.d, 0, 0, tz).toISOString();
   const nextMon = ymdAdd(mon, 7);
   const to = zonedToUtc(nextMon.y, nextMon.m, nextMon.d, 0, 0, tz).toISOString();
-  const { data, loading } = useAsync(() => api.calendarEvents(from, to), [from, to]);
+  const { data, loading } = useAsync(() => api.calendarEvents(from, to), [from, to, refreshKey]);
 
   const placed = useMemo(() => {
     const out: { ev: CalendarEvent; col: number; top: number; height: number }[] = [];
@@ -131,7 +131,7 @@ export function WeekSchedule() {
                     transition={{ delay: 0.1 + i * 0.04 }}
                     title={`${fmtRange(ev.start, ev.end, tz)} ${ev.title}`}
                   >
-                    <span className="wev__time">{fmtRange(ev.start, ev.end, tz).replace(' – ', ' - ')}</span>
+                    <span className="wev__time">{fmtRange(ev.start, ev.end, tz).replace(' – ', '-')}</span>
                     <span className="wev__title">{ev.title}</span>
                   </motion.div>
                 ))}

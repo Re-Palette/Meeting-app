@@ -48,12 +48,12 @@ export function PagesTable({ items }: { items?: EventTypeWithStats[] }) {
         <ul className="ptable">
           {items.slice(0, 3).map((et) => (
             <li key={et.id} className="ptable__row" onClick={() => navigate(`/pages/${et.id}`)}>
-              <span className="ptable__title">
+              <span className="ptable__title" title={`${et.title} / ${durationLabel(et.durationMin)}`}>
                 {et.title} / {durationLabel(et.durationMin)}
               </span>
               <span className={`badge ${et.active ? 'badge--live' : 'badge--off'}`}>{et.active ? '公開中' : '非公開'}</span>
               <span className="ptable__url" onClick={(e) => e.stopPropagation()}>
-                <span className="pill-link">
+                <span className="pill-link" title={publicUrl(et.slug)}>
                   <span className="pill-link__text">{publicUrl(et.slug)}</span>
                 </span>
                 <CopyButton text={publicUrl(et.slug)} />

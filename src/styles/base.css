@@ -68,7 +68,6 @@ body {
   color: var(--ink);
   background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'palt' 1;
   overflow-x: hidden;
   line-height: 1.5;
 }
@@ -128,19 +127,22 @@ p {
 }
 .ambient__planet {
   position: absolute;
-  width: 1900px;
-  height: 1900px;
-  right: -1110px;
-  top: -190px;
+  width: 2960px;
+  height: 2960px;
+  left: calc(100% - 1402px);
+  top: -130px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.55), transparent 30%),
-    radial-gradient(circle at 40% 40%, rgba(196, 214, 232, 0.65), rgba(168, 190, 212, 0.4) 50%, rgba(150, 172, 196, 0.25) 70%);
+    radial-gradient(circle at 26% 12%, rgba(255, 255, 255, 0.45), transparent 14%),
+    radial-gradient(ellipse 12% 3% at 34% 9%, rgba(255, 255, 255, 0.35), transparent 70%),
+    radial-gradient(ellipse 10% 2.5% at 44% 6%, rgba(255, 255, 255, 0.3), transparent 70%),
+    radial-gradient(circle at 50% 50%, rgba(160, 182, 206, 0.35) 38%, rgba(172, 192, 214, 0.62) 46%, rgba(192, 208, 226, 0.8) 50%);
   box-shadow:
-    -2px -2px 0 0 rgba(255, 255, 255, 0.95),
-    -10px -6px 30px rgba(255, 255, 255, 0.85),
-    -40px -20px 120px rgba(255, 255, 255, 0.55),
-    inset 30px 30px 80px rgba(255, 255, 255, 0.45);
+    -1px -1px 0 0 rgba(255, 255, 255, 1),
+    -4px -4px 14px rgba(255, 255, 255, 0.9),
+    -30px -30px 90px rgba(255, 255, 255, 0.6),
+    inset 10px 10px 24px rgba(255, 255, 255, 0.6),
+    inset 40px 40px 120px rgba(255, 255, 255, 0.18);
   opacity: 0.95;
 }
 .ambient__planet::after {
@@ -155,8 +157,8 @@ p {
 }
 .ambient__flare {
   position: absolute;
-  left: calc(100% - 860px);
-  top: 96px;
+  left: calc(100% - 900px);
+  top: 62px;
   width: 140px;
   height: 140px;
   background:
@@ -203,6 +205,7 @@ p {
   margin-bottom: 14px;
 }
 .card__title {
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 12px;

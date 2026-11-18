@@ -39,14 +39,18 @@ export function LocationPill({ type, href }: { type: LocationType; href?: string
   const inner = (
     <>
       <LocationIcon type={type} />
-      {LOCATION_LABEL[type]}
+      <span className="loc-pill__label">{LOCATION_LABEL[type]}</span>
     </>
   );
   if (href)
     return (
-      <a className="loc-pill" href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+      <a className="loc-pill" title={LOCATION_LABEL[type]} href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
         {inner}
       </a>
     );
-  return <span className="loc-pill">{inner}</span>;
+  return (
+    <span className="loc-pill" title={LOCATION_LABEL[type]}>
+      {inner}
+    </span>
+  );
 }

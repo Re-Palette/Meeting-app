@@ -59,7 +59,7 @@ export function Sidebar() {
             <Link key={n.to} to={n.to} className={`nav__item${active ? ' is-active' : ''}`} aria-current={active ? 'page' : undefined}>
               {active && <motion.span layoutId="nav-pill" className="nav__pill" transition={pillSpring} />}
               <span className="nav__icon">
-                <Icon size={22} strokeWidth={1.8} />
+                <Icon size={25} strokeWidth={1.7} />
               </span>
               <span className="nav__label">{n.label}</span>
             </Link>
