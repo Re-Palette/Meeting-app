@@ -126,5 +126,5 @@ export function computeContacts(bookings: Booking[]): Contact[] {
       lastBookingAt: b.start,
     });
   }
-  return [...map.values()].sort((a, b) => (a.lastBookingAt < b.lastBookingAt ? 1 : -1));
+  return [...map.values()].filter((c) => c.bookingCount > 0).sort((a, b) => (a.lastBookingAt < b.lastBookingAt ? 1 : -1));
 }
