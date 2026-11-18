@@ -124,7 +124,7 @@ export function WeekSchedule({ refreshKey = 0 }: { refreshKey?: number }) {
                 {placed.map(({ ev, col, top, height }, i) => (
                   <motion.div
                     key={ev.id}
-                    className={`wev ${ev.source === 'booking' ? (ev.status === 'pending' ? 'wev--pending' : 'wev--teal') : 'wev--purple'}`}
+                    className={`wev ${ev.title.endsWith('（自動）') ? 'wev--auto' : ev.source === 'booking' ? (ev.status === 'pending' ? 'wev--pending' : 'wev--teal') : 'wev--purple'}`}
                     style={{ left: `calc(${(col / 7) * 100}% + 4px)`, top: `${top * 100}%`, minHeight: `${height * 100}%` }}
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}

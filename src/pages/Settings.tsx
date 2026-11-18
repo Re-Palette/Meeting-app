@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { RefreshCw, Check, CircleAlert, Link2, LogOut, Plus, Save, Trash2, UserRound, ArrowRight, Unplug } from 'lucide-react';
+import { RefreshCw, Check, CircleAlert, Link2, LogOut, Plus, Save, Trash2, UserRound, ArrowRight, Unplug, CalendarClock } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Settings, SettingsInput } from '../../shared/types';
+import { BusyRulesEditor, calendarOptions, ruleError } from '../components/BusyRules';
 import { ErrorState } from '../components/EmptyState';
 import { Skel } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
@@ -49,6 +50,7 @@ export default function SettingsPage() {
   const [gError, setGError] = useState('');
   const [gBusy, setGBusy] = useState(false);
   const [newIcs, setNewIcs] = useState('');
+  const [showRuleErrors, setShowRuleErrors] = useState(false);
   const tzs = useMemo(allTimezones, []);
 
   const load = () => {
@@ -61,7 +63,8 @@ export default function SettingsPage() {
         const { googleConnected: _g, googleEmail: _e, ...rest } = s;
         void _g;
         void _e;
-        setForm(rest);
+        setForm({ ...rest, busyRules: rest.busyRules ?? [] });
+        setShowRuleErrors(false);
       })
       .catch(setError);
   };
@@ -94,12 +97,19 @@ export default function SettingsPage() {
       form.timezone !== ctxSettings.timezone ||
       form.googleTargetCalendarId !== ctxSettings.googleTargetCalendarId ||
       JSON.stringify(form.googleCalendarIds) !== JSON.stringify(ctxSettings.googleCalendarIds) ||
-      JSON.stringify(form.icsUrls) !== JSON.stringify(ctxSettings.icsUrls)
+      JSON.stringify(form.icsUrls) !== JSON.stringify(ctxSettings.icsUrls) ||
+      JSON.stringify(form.busyRules ?? []) !== JSON.stringify(ctxSettings.busyRules ?? [])
     );
   }, [form, ctxSettings]);
 
   const save = async () => {
     if (!form) return;
+    if ((form.busyRules ?? []).some((r) => ruleError(r))) {
+      setShowRuleErrors(true);
+      toast('「予定の前後をブロック」の入力内容を確認してください', 'error');
+      document.querySelector('.rules')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     setSaving(true);
     try {
       const s = await api.saveSettings(form);
@@ -325,6 +335,25 @@ export default function SettingsPage() {
                 </button>
               </form>
             </>
+          )}
+        </motion.section>
+
+        <motion.section className="card form-card" variants={item} layout="position">
+          <h2 className="form-card__title">
+            <CalendarClock size={20} /> 予定の前後をブロック
+          </h2>
+          <p className="field__hint" style={{ marginBottom: 14, lineHeight: 1.7 }}>
+            特定の予定の前後に、ミーティングを入れない時間を確保します。例：「学校」という予定のあとは1時間30分ミーティングを入れない。
+          </p>
+          {!form ? (
+            <Skel h={80} />
+          ) : (
+            <BusyRulesEditor
+              rules={form.busyRules ?? []}
+              onChange={(busyRules) => setForm({ ...form, busyRules })}
+              options={calendarOptions(cals, form.icsUrls)}
+              showErrors={showRuleErrors}
+            />
           )}
         </motion.section>
 
