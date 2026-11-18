@@ -1,6 +1,6 @@
-import type { BookingRequest, EventType, EventTypeInput, Question, SettingsInput, WeeklyAvailability } from '../shared/types';
-import { HttpError } from './env';
-import { isValidTimezone, parseHM } from './tz';
+import type { BookingRequest, EventType, EventTypeInput, Question, SettingsInput, WeeklyAvailability } from '../shared/types.js';
+import { HttpError } from './env.js';
+import { isValidTimezone, parseHM } from './tz.js';
 
 const LOCATIONS = ['google_meet', 'zoom', 'in_person', 'phone', 'custom'];
 const COLORS = ['teal', 'blue', 'purple', 'orange', 'pink'];

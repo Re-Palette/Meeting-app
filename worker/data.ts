@@ -1,9 +1,9 @@
-import type { Booking, CalendarEvent, EventType, Settings } from '../shared/types';
-import type { Env } from './env';
-import { HttpError } from './env';
-import { getAccessToken, getTokens, freeBusy, listEvents } from './google';
-import { type IcsEvent, parseIcs } from './ics';
-import { type Interval } from './tz';
+import type { Booking, CalendarEvent, EventType, Settings } from '../shared/types.js';
+import type { Env } from './env.js';
+import { HttpError } from './env.js';
+import { getAccessToken, getTokens, freeBusy, listEvents } from './google.js';
+import { type IcsEvent, parseIcs } from './ics.js';
+import { type Interval } from './tz.js';
 
 type Row = Record<string, unknown>;
 
@@ -175,24 +175,28 @@ function hashStr(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-/** Cache API (60s) around externalBusy. Only successful results are cached. */
+// Per-instance busy cache (60s). Warm instances are reused by Vercel Fluid compute.
+const busyCache = new Map<string, { at: number; busy: Interval[] }>();
+const BUSY_TTL = 60_000;
+
+/** In-memory 60s cache around externalBusy. Only successful results are cached. */
 async function cachedExternalBusy(env: Env, settings: Settings, from: number, to: number): Promise<Interval[]> {
   const v = hashStr(JSON.stringify([settings.googleCalendarIds, settings.icsUrls, settings.timezone, settings.googleConnected]));
-  const key = new Request(`https://cache.meetflow.invalid/busy?from=${from}&to=${to}&v=${v}`);
-  const cache = typeof caches !== 'undefined' ? (caches as unknown as { default: Cache }).default : null;
-  try {
-    const hit = await cache?.match(key);
-    if (hit) return (await hit.json()) as Interval[];
-  } catch {
-    /* cache unavailable */
-  }
+  const key = `${from}:${to}:${v}`;
+  const now = Date.now();
+  const hit = busyCache.get(key);
+  if (hit && now - hit.at < BUSY_TTL) return hit.busy;
   const busy = await externalBusy(env, settings, from, to, true);
-  try {
-    await cache?.put(key, new Response(JSON.stringify(busy), { headers: { 'Cache-Control': 'max-age=60' } }));
-  } catch {
-    /* ignore */
+  if (busyCache.size > 200) {
+    for (const [k, e] of busyCache) if (now - e.at >= BUSY_TTL) busyCache.delete(k);
+    if (busyCache.size > 200) busyCache.clear();
   }
+  busyCache.set(key, { at: now, busy });
   return busy;
+}
+
+export function resetBusyCache(): void {
+  busyCache.clear();
 }
 
 export interface BusyOptions {

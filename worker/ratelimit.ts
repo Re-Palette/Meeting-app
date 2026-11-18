@@ -1,8 +1,8 @@
-import type { Env } from './env';
-import { HttpError } from './env';
+import type { Env } from './env.js';
+import { HttpError } from './env.js';
 
 export function clientIp(req: Request): string {
-  return req.headers.get('CF-Connecting-IP') ?? 'local';
+  return req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local';
 }
 
 function windowStart(now: number, windowMs: number): number {

@@ -3,7 +3,7 @@
 Base path `/api`. JSON in/out. Types in `shared/types.ts`. Errors: non-2xx with `ApiError`.
 
 ## Auth (single owner)
-Owner password is the Worker secret `ADMIN_PASSWORD`. Session = HMAC-signed cookie `mf_session` (secret `SESSION_SECRET`), HttpOnly, Secure, SameSite=Lax, 30 days.
+Owner password is the environment variable `ADMIN_PASSWORD`. Session = HMAC-signed cookie `mf_session` (secret `SESSION_SECRET`), HttpOnly, Secure, SameSite=Lax, 30 days.
 All `/api/*` routes except `/api/auth/*`, `/api/public/*` and `/api/google/callback` require the cookie (401 otherwise).
 
 | Method | Path | Body | Response |

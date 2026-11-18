@@ -6,7 +6,7 @@ import type {
   EventTypeWithStats,
   PublicEventType,
   Settings,
-} from '../shared/types';
+} from '../shared/types.js';
 import {
   COOKIE_NAME,
   SESSION_TTL_SEC,
@@ -14,18 +14,18 @@ import {
   safeEqual,
   signToken,
   verifyToken,
-} from './auth';
+} from './auth.js';
 import {
   getBusy,
   getCalendarEvents,
   loadSettings,
   rowToBooking,
   rowToEventType,
-} from './data';
-import { type Env, HttpError } from './env';
-import { clientIp, rateCheck, rateClear, rateHit } from './ratelimit';
-import * as google from './google';
-import { generateSlots, computeFreeHours } from './slots';
+} from './data.js';
+import { type Env, HttpError } from './env.js';
+import { clientIp, rateCheck, rateClear, rateHit } from './ratelimit.js';
+import * as google from './google.js';
+import { generateSlots, computeFreeHours } from './slots.js';
 import {
   computeAnalytics,
   computeContacts,
@@ -33,19 +33,18 @@ import {
   pendingCard,
   weekIndex,
   weekStarts,
-} from './stats';
-import { addDays, dateMinToUtc, isDateStr, diffDays, localDate } from './tz';
-import { validateBookingRequest, validateEventTypeInput, validateSettingsInput } from './validate';
+} from './stats.js';
+import { addDays, dateMinToUtc, isDateStr, diffDays, localDate } from './tz.js';
+import { validateBookingRequest, validateEventTypeInput, validateSettingsInput } from './validate.js';
 
 type Row = Record<string, unknown>;
 type C = Context<{ Bindings: Env }>;
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Non-API requests are served by static assets.
+// Per-request Env: derive APP_URL from the request origin when it is not configured.
 app.use('*', async (c, next) => {
-  const p = new URL(c.req.url).pathname;
-  if (p !== '/api' && !p.startsWith('/api/')) return c.env.ASSETS.fetch(c.req.raw);
+  if (!c.env.APP_URL) c.env.APP_URL = new URL(c.req.url).origin;
   await next();
 });
 
@@ -556,6 +555,4 @@ app.post('/api/public/event-types/:slug/book', async (c) => {
   return c.json(await getBooking(c.env, id), 201);
 });
 
-export default {
-  fetch: (request: Request, env: Env, ctx: ExecutionContext) => app.fetch(request, env, ctx),
-};
+export default app;

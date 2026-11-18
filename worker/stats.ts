@@ -1,5 +1,5 @@
-import type { AnalyticsData, Booking, Contact, StatCard } from '../shared/types';
-import { addDays, dateMinToUtc, diffDays, getParts, localDate, mondayOf, pad } from './tz';
+import type { AnalyticsData, Booking, Contact, StatCard } from '../shared/types.js';
+import { addDays, dateMinToUtc, diffDays, getParts, localDate, mondayOf, pad } from './tz.js';
 
 export function weekStarts(now: number, tz: string, n: number): string[] {
   const cur = mondayOf(localDate(now, tz));

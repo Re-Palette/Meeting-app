@@ -1,8 +1,8 @@
-import type { LocationType } from '../shared/types';
-import { decryptString, encryptString } from './crypto';
-import type { Env } from './env';
-import { HttpError } from './env';
-import { type Interval, zonedToUtc } from './tz';
+import type { LocationType } from '../shared/types.js';
+import { decryptString, encryptString } from './crypto.js';
+import type { Env } from './env.js';
+import { HttpError } from './env.js';
+import { type Interval, zonedToUtc } from './tz.js';
 
 export const GOOGLE_SCOPES =
   'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly openid email';

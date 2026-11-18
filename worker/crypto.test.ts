@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decryptString, encryptString, isEncrypted } from './crypto';
-import { parseCookies } from './auth';
+import { decryptString, encryptString, isEncrypted } from './crypto.js';
+import { parseCookies } from './auth.js';
 
 describe('token encryption', () => {
   it('round-trips and is non-deterministic', async () => {

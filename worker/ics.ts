@@ -1,4 +1,4 @@
-import { getParts, isValidTimezone, zonedToUtc } from './tz';
+import { getParts, isValidTimezone, zonedToUtc } from './tz.js';
 
 export interface IcsEvent {
   uid: string;

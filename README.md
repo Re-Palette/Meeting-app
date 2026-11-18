@@ -1,6 +1,6 @@
 # MeetFlow
 
-MeetFlow は、自分ひとりで使う無料の日程調整アプリです（TimeRex の代替を想定）。予約ページを公開すると、相手は空き時間から選んで予約できます。Google カレンダーの空き時間を読み取り、確定した予定には Google Meet のリンクを自動で付けます。Cloudflare Workers と D1 で動くため、サーバーの維持費はかかりません。
+MeetFlow は、自分ひとりで使う無料の日程調整アプリです（TimeRex の代替を想定）。予約ページを公開すると、相手は空き時間から選んで予約できます。Google カレンダーの空き時間を読み取り、確定した予定には Google Meet のリンクを自動で付けます。Vercel と Turso の無料枠で動かせます。
 
 ## 機能
 
@@ -14,24 +14,23 @@ MeetFlow は、自分ひとりで使う無料の日程調整アプリです（Ti
 
 ## 料金
 
-すべて無料枠の範囲で使えば **¥0** です。
+無料枠の範囲で使えば **¥0** です。
 
-| 項目 | 費用 | 適用される無料枠・制限 |
+| 項目 | 費用 | 条件 |
 |---|---|---|
-| Cloudflare Workers | ¥0 | 10万リクエスト/日（無料プラン） |
-| Cloudflare 静的アセット（画面の配信） | ¥0 | 静的ファイルへのリクエストは Workers のリクエスト数に含まれない |
-| Cloudflare D1（データベース） | ¥0 | 読み取り 500万行/日、書き込み 10万行/日、保存 5GB（無料プラン） |
+| Vercel（Hobby プラン） | ¥0 | 個人・非商用の利用が対象の無料プラン |
+| Turso（無料プラン） | ¥0 | データベース（libSQL）の無料枠内 |
 | Google Calendar API | ¥0 | 自分の Google Cloud プロジェクトの無料クォータ内 |
 | ICS フィード（iCloud、Outlook など） | ¥0 | 非公開の iCal URL を読むだけ |
-| workers.dev サブドメイン | ¥0 | 独自ドメインを使う場合のみ、ドメイン代が別途かかる |
+| 独自ドメイン | 別途 | 任意。Vercel の既定ドメインのみなら不要 |
 
-上限の最新値は Cloudflare の公式ドキュメントで確認してください。1人分の予約であれば、無料枠を超えることはまずありません。
+上限や料金は変わることがあるため、最新の値は各サービスの料金ページで確認してください。1人分の予約であれば、無料枠を超えることは通常ありません。
 
 ## 技術スタック
 
-- 実行基盤: Cloudflare Workers（画面は Workers の静的アセットとして配信）
+- ホスティング: Vercel（画面は Vite の静的ビルド、API は Node.js の Vercel Function）
 - API: Hono（`/api` 配下）
-- データベース: Cloudflare D1（SQLite）
+- データベース: Turso（libSQL、SQLite 互換）
 - 画面: React 18、React Router、framer-motion、lucide-react
 - ビルド: Vite、TypeScript
 - テスト: Vitest
@@ -49,19 +48,21 @@ npm install
 2. 環境変数ファイルを作成します。
 
 ```bash
-cp .dev.vars.example .dev.vars
+cp .env.example .env
 ```
 
-`.dev.vars` を開き、`ADMIN_PASSWORD`（ログインパスワード）と `SESSION_SECRET`（長いランダム文字列）を設定します。`SESSION_SECRET` は次のコマンドで生成できます。
+`.env` を開き、`ADMIN_PASSWORD`（ログインパスワード）と `SESSION_SECRET`（長いランダム文字列）を設定します。`SESSION_SECRET` は次のコマンドで生成できます。
 
 ```bash
 openssl rand -hex 32
 ```
 
-3. ローカル D1 にマイグレーションを適用します。
+`TURSO_DATABASE_URL` は空のままにすると、ローカルの `.data/local.db` を使います。
+
+3. データベースにマイグレーションを適用します。
 
 ```bash
-npm run db:migrate:local
+npm run db:migrate
 ```
 
 4. 開発サーバーを起動します。
@@ -70,7 +71,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-5. ブラウザで http://localhost:5173 を開き、`.dev.vars` に設定した `ADMIN_PASSWORD` でログインします。
+5. ブラウザで http://localhost:5173 を開き、`.env` に設定した `ADMIN_PASSWORD` でログインします。
 
 Google カレンダー連携をローカルで試す場合は、[docs/SETUP.md](docs/SETUP.md) の手順 6 を参照してください。
 
@@ -78,23 +79,21 @@ Google カレンダー連携をローカルで試す場合は、[docs/SETUP.md](
 
 | コマンド | 内容 |
 |---|---|
-| `npm run dev` | API（wrangler, ポート 8787）と画面（Vite, ポート 5173）を同時に起動。Vite が `/api` を API に転送する |
+| `npm run dev` | API（ポート 8787）と画面（Vite, ポート 5173）を同時に起動。Vite が `/api` を API に転送する |
 | `npm run dev:web` | 画面（Vite）のみ起動 |
-| `npm run dev:api` | API（wrangler dev, ポート 8787）のみ起動 |
-| `npm run build` | 型チェックを行い、画面をビルドして `dist/` に出力 |
+| `npm run dev:api` | API（ポート 8787）のみ起動 |
+| `npm run build` | `TURSO_DATABASE_URL` が設定されていればマイグレーションを適用し、型チェックを行ったうえで `dist/` に画面をビルド |
 | `npm run typecheck` | TypeScript の型チェックのみ実行 |
 | `npm test` | Vitest でテストを実行 |
-| `npm run db:migrate:local` | ローカル D1 にマイグレーションを適用 |
-| `npm run db:migrate:remote` | 本番 D1 にマイグレーションを適用 |
-| `npm run deploy` | ビルドしたうえで Cloudflare Workers にデプロイ |
+| `npm run db:migrate` | マイグレーションを適用。`TURSO_DATABASE_URL` 未設定時はローカルの `.data/local.db` |
 
 ## 本番デプロイ
 
 手順の詳細は [docs/SETUP.md](docs/SETUP.md) を参照してください。概要は次のとおりです。
 
-1. Cloudflare にログインし、D1 データベースを作成する
-2. マイグレーションを適用し、シークレットを登録する
-3. `APP_URL` を設定して `npm run deploy` する
+1. Vercel にプロジェクトを作成する
+2. Vercel Marketplace から Turso データベースを接続する
+3. 環境変数を登録して再デプロイする
 4. Google Cloud で OAuth クライアントを作成し、Google カレンダーと連携する
 5. 必要に応じて ICS フィードと独自ドメインを設定する
 
@@ -102,17 +101,19 @@ Google カレンダー連携をローカルで試す場合は、[docs/SETUP.md](
 
 ```
 .
+├── api/             Vercel Function のエントリ（api/index.ts）
+├── worker/          Hono の API 本体（worker/index.ts）
 ├── src/             React の画面（管理画面と公開予約ページ）
-├── worker/          Hono の API（Worker のエントリは worker/index.ts）
 ├── shared/          API 仕様（API.md）と画面・API 共通の型（types.ts）
-├── migrations/      D1 のマイグレーション（SQL）
+├── migrations/      データベースのマイグレーション（SQL）
+├── scripts/         migrate.mjs（マイグレーション）、dev-server.ts（ローカル API）
 ├── docs/
 │   └── SETUP.md     本番デプロイの手順
 ├── index.html
 ├── vite.config.ts   Vite の設定（/api を 8787 に転送）
-├── wrangler.toml    Cloudflare Workers と D1 の設定
+├── vercel.json      ビルドと /api・画面のルーティング
 ├── package.json
-└── .dev.vars.example  ローカル用の環境変数の雛形
+└── .env.example     環境変数の雛形
 ```
 
 API の仕様は [shared/API.md](shared/API.md) にまとめています。

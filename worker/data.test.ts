@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Settings } from '../shared/types';
-import { CAL_UNAVAILABLE, getBusy, icsEvents, resetIcsCache } from './data';
-import type { Env } from './env';
+import type { Settings } from '../shared/types.js';
+import { CAL_UNAVAILABLE, getBusy, icsEvents, resetIcsCache } from './data.js';
+import type { Env } from './env.js';
 
 const settings = (icsUrls: string[]): Settings => ({
   ownerName: '',

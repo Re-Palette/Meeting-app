@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCookies, safeEqual, signToken, verifyToken } from './auth';
+import { parseCookies, safeEqual, signToken, verifyToken } from './auth.js';
 
 describe('auth', () => {
   it('safeEqual', async () => {

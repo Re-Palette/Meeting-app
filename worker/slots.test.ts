@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeFreeHours, generateSlots, type SlotEventType } from './slots';
-import { dateMinToUtc, getParts, zonedToUtc } from './tz';
+import { computeFreeHours, generateSlots, type SlotEventType } from './slots.js';
+import { dateMinToUtc, getParts, zonedToUtc } from './tz.js';
 
 const weekdays = (r: { start: string; end: string }[]) => ({ '1': r, '2': r, '3': r, '4': r, '5': r });
 

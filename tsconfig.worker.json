@@ -3,14 +3,14 @@
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/worker.tsbuildinfo",
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["@cloudflare/workers-types"],
+    "types": ["node"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["worker", "shared"]
+  "include": ["worker", "shared", "api", "scripts"]
 }

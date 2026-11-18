@@ -1,4 +1,4 @@
-import type { EventType, Slot, WeeklyAvailability } from '../shared/types';
+import type { EventType, Slot, WeeklyAvailability } from '../shared/types.js';
 import {
   type Interval,
   addDays,
@@ -7,7 +7,7 @@ import {
   mergeIntervals,
   parseHM,
   weekdayOf,
-} from './tz';
+} from './tz.js';
 
 export type SlotEventType = Pick<
   EventType,

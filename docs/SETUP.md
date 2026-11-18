@@ -1,90 +1,70 @@
 # 本番デプロイ手順
 
-MeetFlow を Cloudflare Workers にデプロイし、Google カレンダーと連携するまでの手順です。すべて無料枠で完結します。
+MeetFlow を Vercel にデプロイし、Turso データベースと Google カレンダーに接続するまでの手順です。すべて無料枠で完結します。
 
 前提:
 
-- Cloudflare アカウント（無料）
+- Vercel アカウント（無料の Hobby プラン）
 - Google アカウント
-- Node.js（LTS 推奨）と npm
-- リポジトリのルートで作業すること
+- このプロジェクトを Git リポジトリにプッシュ済みであること（Vercel に取り込むため）
+- ローカルで手順 6 の Google 設定を試す場合は Node.js（LTS 推奨）と npm
 
-## 1. Cloudflare にログインする
+## 1. Vercel にプロジェクトを作成する
 
-```bash
-npx wrangler login
-```
+[Vercel](https://vercel.com/) にログインし、「Add New」→「Project」から、このリポジトリをインポートします。
 
-ブラウザが開くので、Cloudflare アカウントで認可します。
+フレームワーク、ビルドコマンド（`npm run build`）、出力先（`dist`）は `vercel.json` の設定が使われるため、変更は不要です。
 
-## 2. D1 データベースを作成する
+## 2. Turso データベースを接続する
 
-```bash
-npx wrangler d1 create meetflow
-```
+Turso は Vercel Marketplace から追加します。
 
-出力に表示される `database_id` を、`wrangler.toml` の `[[d1_databases]]` にある `database_id` へ貼り付けます。初期値の `00000000-0000-0000-0000-000000000000` は置き換えてください。
+1. Vercel のプロジェクトで「Storage」→「Marketplace」を開き、「Turso」を選びます。
+2. データベースを作成し、このプロジェクトに接続します。
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "meetflow"
-database_id = "（ここに貼り付け）"
-migrations_dir = "migrations"
-```
+接続すると `TURSO_DATABASE_URL` と `TURSO_AUTH_TOKEN` が環境変数に自動で追加されます。手動で設定する必要はありません。
 
-## 3. 本番データベースにマイグレーションを適用する
+マイグレーション（`migrations/*.sql`）は、`TURSO_DATABASE_URL` が設定されているときにビルドの中で自動的に適用されます。
 
-```bash
-npm run db:migrate:remote
-```
+## 3. 環境変数を登録する
 
-## 4. シークレットを登録する
+Vercel のプロジェクトで「Settings」→「Environment Variables」を開き、次の値を登録します。
 
-シークレットは `wrangler.toml` や Git には書かず、Cloudflare に直接登録します。コマンドを実行すると値の入力を求められます。
+| 名前 | 値 | 必須 |
+|---|---|---|
+| `ADMIN_PASSWORD` | ログインパスワード | 必須（既定値はありません） |
+| `SESSION_SECRET` | セッション署名用の長いランダム文字列 | 必須 |
+| `GOOGLE_CLIENT_ID` | 手順 6 で作成する OAuth クライアントの Client ID | 手順 6 のあとに登録 |
+| `GOOGLE_CLIENT_SECRET` | 同じく Client Secret | 手順 6 のあとに登録 |
+| `APP_URL` | `https://meeting-app1.vercel.app` | 任意（未設定ならリクエストの URL から決まる） |
 
-ログインパスワードを登録します。
-
-```bash
-npx wrangler secret put ADMIN_PASSWORD
-```
-
-セッション署名用の文字列を生成します。出力された値を次のコマンドで入力してください。
+`SESSION_SECRET` は次のコマンドで生成できます。出力された値を登録してください。
 
 ```bash
 openssl rand -hex 32
 ```
 
-```bash
-npx wrangler secret put SESSION_SECRET
+`TURSO_DATABASE_URL` と `TURSO_AUTH_TOKEN` は手順 2 で自動的に入るため、ここでは登録しません。
+
+## 4. 再デプロイしてマイグレーションを確認する
+
+環境変数を追加・変更したら、再デプロイして反映します。
+
+「Deployments」を開き、最新のデプロイの「…」メニューから「Redeploy」を選びます。
+
+ビルドログに `[migrate]` で始まる行が出ていれば、マイグレーションが実行されています。
+
+```
+[migrate] applied 0001_init.sql
 ```
 
-`GOOGLE_CLIENT_ID` と `GOOGLE_CLIENT_SECRET` は、手順 6 で OAuth クライアントを作成した後に登録します。
+`[migrate] TURSO_DATABASE_URL is not set; skipping database migrations.` と出ている場合は、手順 2 の Turso の接続を確認してから、もう一度再デプロイしてください。
 
-登録済みのシークレット名は次のコマンドで確認できます。
+## 5. 動作を確認する
 
-```bash
-npx wrangler secret list
-```
+https://meeting-app1.vercel.app を開き、`ADMIN_PASSWORD` でログインできれば成功です。
 
-## 5. APP_URL を設定してデプロイする
-
-Workers のアドレスは `https://meetflow.<subdomain>.workers.dev` の形式です。`<subdomain>` は Cloudflare ダッシュボードの「Workers & Pages」で確認できます。`wrangler.toml` の `[vars]` を次のように書き換えます。
-
-```toml
-[vars]
-APP_URL = "https://meetflow.<subdomain>.workers.dev"
-```
-
-末尾に `/` を付けないでください。この値は Google の OAuth リダイレクト URI の元になります。
-
-デプロイします。ビルドのあと Workers に配置されます。
-
-```bash
-npm run deploy
-```
-
-完了すると URL が表示されます。その URL を開き、`ADMIN_PASSWORD` でログインできれば成功です。
+ログアウトすると、そのデバイスだけでなく **すべてのセッションが終了** します。
 
 ## 6. Google カレンダーと連携する
 
@@ -126,25 +106,15 @@ Google カレンダーとの連携には、自分の Google Cloud プロジェ�
 - 承認済みのリダイレクト URI: 次の 2 つを追加します
 
 ```
-https://meetflow.<subdomain>.workers.dev/api/google/callback
+https://meeting-app1.vercel.app/api/google/callback
 http://localhost:5173/api/google/callback
 ```
 
-1 行目は `APP_URL` に `/api/google/callback` を付けた値です。手順 5 で設定した `APP_URL` と完全に一致させてください。2 行目はローカル開発用です。
+1 行目は本番の `APP_URL` に `/api/google/callback` を付けた値です。手順 3 で設定した `APP_URL` と完全に一致させてください。2 行目はローカル開発用です。
 
-作成すると Client ID と Client Secret が表示されます。次のコマンドで登録します。
+作成すると Client ID と Client Secret が表示されます。Client ID と Client Secret を、手順 3 の環境変数 `GOOGLE_CLIENT_ID` と `GOOGLE_CLIENT_SECRET` に登録し、再デプロイしてください。
 
-```bash
-npx wrangler secret put GOOGLE_CLIENT_ID
-```
-
-```bash
-npx wrangler secret put GOOGLE_CLIENT_SECRET
-```
-
-登録後は再デプロイ不要です。反映されない場合は `npm run deploy` を実行してください。
-
-ローカルで連携を試す場合は、`.dev.vars` に次の値を追記します。`.dev.vars` の値は `wrangler.toml` の `[vars]` より優先されるため、ローカルのリダイレクト先が本番の URL に向かなくなります。
+ローカルで連携を試す場合は、`.env` に次の値を追記します。
 
 ```
 GOOGLE_CLIENT_ID=（Client ID）
@@ -173,20 +143,27 @@ ICS の URL は、そのまま他人に渡せる情報です。秘密として�
 
 ## 8. 独自ドメインを設定する（任意）
 
-独自ドメインを使う場合は、そのドメインのネームサーバーが Cloudflare で管理されている必要があります。
+独自ドメインを使う場合は、Vercel のプロジェクトの「Settings」→「Domains」でドメインを追加し、表示される DNS の指示に従います。
 
-1. Cloudflare ダッシュボードの「Workers & Pages」→ `meetflow` →「設定」→「ドメインとルート」を開き、「カスタムドメイン」を追加します。
-2. `wrangler.toml` の `APP_URL` を新しいドメインに変更します（例: `APP_URL = "https://meet.example.com"`）。
-3. Google Cloud の OAuth クライアントの承認済みリダイレクト URI を、新しいドメインの `/api/google/callback` に変更します。古い URI は残しても問題ありません。
-4. 再デプロイします。
+1. 環境変数 `APP_URL` を新しいドメインに変更します（例: `https://meet.example.com`）。末尾に `/` は付けないでください。
+2. Google Cloud の OAuth クライアントの承認済みリダイレクト URI を、新しいドメインの `/api/google/callback` に変更します。古い URI は残しても問題ありません。
+3. 再デプロイします。
 
-```bash
-npm run deploy
-```
-
-`workers.dev` の URL も引き続き使えます。
+`vercel.app` の URL も引き続き使えます。
 
 ## 9. トラブルシューティング
+
+### 管理者パスワードが設定されていません（ログイン画面）
+
+`ADMIN_PASSWORD` または `SESSION_SECRET` が未設定です。手順 3 で登録し、再デプロイしてください。
+
+### API が 500 エラーを返す（データベース関連）
+
+Turso が接続されていないか、ビルド時にマイグレーションが実行されていません。次の順に確認してください。
+
+1. 「Settings」→「Environment Variables」に `TURSO_DATABASE_URL` と `TURSO_AUTH_TOKEN` があるか
+2. ビルドログに `[migrate]` の行があるか（手順 4 を参照）
+3. 追加・変更のあと、再デプロイしたか
 
 ### redirect_uri_mismatch（Google の画面にエラーが出る）
 
@@ -207,6 +184,10 @@ Google の更新トークンが失効しています。主な原因は次のと�
 
 「設定」→「Google カレンダーと連携」をもう一度実行してください。
 
+### 公開ページに「カレンダーを確認できませんでした」と出る
+
+Google の更新トークンか、ICS URL の取得に失敗しています。「設定」で Google カレンダーを連携し直すか、ICS URL が正しいか（`https://` で始まっているか）を確認してください。
+
 ### 空き時間が表示されない・予約枠が出ない
 
 次の順に確認してください。
@@ -220,17 +201,10 @@ Google の更新トークンが失効しています。主な原因は次のと�
 
 ### ログインできない
 
-- 本番では `ADMIN_PASSWORD` が登録されているか確認してください（`npx wrangler secret list`）。
-- ローカルでは `.dev.vars` の `ADMIN_PASSWORD` を入力しているか確認してください。`.dev.vars` を変更したら `npm run dev` を再起動します。
-
-### 「no such table」などデータベースのエラーが出る
-
-マイグレーションが適用されていません。本番では `npm run db:migrate:remote`、ローカルでは `npm run db:migrate:local` を実行してください。
+- 本番では、Vercel の環境変数に `ADMIN_PASSWORD` があるか確認してください。変更後は再デプロイが必要です。
+- ログインは 1 つの IP アドレスから 10 分間に 10 回失敗すると、一時的に制限されます。時間をおいてから再度お試しください。
+- ローカルでは `.env` の `ADMIN_PASSWORD` を入力しているか確認してください。`.env` を変更したら `npm run dev` を再起動します。
 
 ### エラーの詳細を見たい
 
-本番の Worker のログをリアルタイムで確認できます。
-
-```bash
-npx wrangler tail
-```
+Vercel のプロジェクトの「Deployments」でビルドログ、「Logs」で実行時のログを確認できます。

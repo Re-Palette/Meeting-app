@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseIcs } from './ics';
+import { parseIcs } from './ics.js';
 
 const wrap = (...events: string[]) =>
   ['BEGIN:VCALENDAR', 'VERSION:2.0', ...events.map((e) => `BEGIN:VEVENT\r\n${e}\r\nEND:VEVENT`), 'END:VCALENDAR'].join('\r\n');
