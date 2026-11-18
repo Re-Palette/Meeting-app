@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Suspense, useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Navigate, useLocation, useNavigate, useOutlet } from 'react-router-dom';
-import type { Settings } from '../../shared/types';
+import type { CurrentUser, Settings } from '../../shared/types';
 import { api, UNAUTHORIZED_EVENT } from '../lib/api';
 import { AppContext } from '../lib/appContext';
 import { pageVariants } from '../lib/motion';
@@ -19,12 +19,16 @@ export function Shell() {
   const outlet = useOutlet();
   const [auth, setAuth] = useState<'checking' | 'ok' | 'no'>('checking');
   const [settings, setSettings] = useState<Settings>();
+  const [user, setUser] = useState<CurrentUser | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
     api
       .me()
-      .then((r) => setAuth(r.authenticated ? 'ok' : 'no'))
+      .then((r) => {
+        setUser(r.user ?? null);
+        setAuth(r.authenticated ? 'ok' : 'no');
+      })
       .catch(() => setAuth('no'));
     const onUnauth = () => navigate('/login', { replace: true, state: { from: window.location.pathname } });
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauth);
@@ -48,6 +52,8 @@ export function Shell() {
 
   const ctx = {
     settings,
+    user,
+    isOwner: user?.role === 'owner',
     setSettings,
     tz: settings?.timezone || browserTz(),
     ownerName: settings?.ownerName || '',

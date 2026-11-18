@@ -1,11 +1,11 @@
 import type { LocationType } from '../shared/types.js';
 import { decryptString, encryptString } from './crypto.js';
 import type { Env } from './env.js';
-import { HttpError } from './env.js';
+import { HttpError, uidOf } from './env.js';
 import { type Interval, zonedToUtc } from './tz.js';
 
 export const GOOGLE_SCOPES =
-  'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly openid email';
+  'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly openid email profile';
 
 const API = 'https://www.googleapis.com/calendar/v3';
 
@@ -17,8 +17,8 @@ export interface TokenRow {
   broken: boolean; // refresh token rejected (or undecryptable): reconnect required
 }
 
-export async function getTokens(env: Env): Promise<TokenRow | null> {
-  const r = await env.DB.prepare('SELECT email, refresh_token, access_token, expires_at, broken FROM google_tokens WHERE id = 1').first<{
+export async function getTokens(env: Env, userId = uidOf(env)): Promise<TokenRow | null> {
+  const r = await env.DB.prepare('SELECT email, refresh_token, access_token, expires_at, broken FROM google_tokens WHERE user_id = ?').bind(userId).first<{
     email: string;
     refresh_token: string;
     access_token: string;
@@ -40,7 +40,7 @@ export async function getTokens(env: Env): Promise<TokenRow | null> {
 }
 
 async function markBroken(env: Env): Promise<void> {
-  await env.DB.prepare('UPDATE google_tokens SET broken = 1, access_token = \'\', expires_at = 0 WHERE id = 1').run();
+  await env.DB.prepare('UPDATE google_tokens SET broken = 1, access_token = \'\', expires_at = 0 WHERE user_id = ?').bind(uidOf(env)).run();
 }
 
 export function googleConfigured(env: Env): boolean {
@@ -51,32 +51,42 @@ export function redirectUri(env: Env): string {
   return `${env.APP_URL.replace(/\/$/, '')}/api/google/callback`;
 }
 
-export function buildAuthUrl(env: Env, state: string): string {
+export function buildAuthUrl(env: Env, state: string, prompt = 'consent'): string {
   const q = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri(env),
     response_type: 'code',
     scope: GOOGLE_SCOPES,
     access_type: 'offline',
-    prompt: 'consent',
+    prompt,
     include_granted_scopes: 'true',
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
 }
 
-function emailFromIdToken(idToken: string | undefined): string {
-  if (!idToken) return '';
+function decodeIdToken(idToken: string | undefined): { email?: string; email_verified?: boolean | string; name?: string; picture?: string } {
+  if (!idToken) return {};
   try {
     const payload = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))));
-    return typeof json.email === 'string' ? json.email : '';
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))));
   } catch {
-    return '';
+    return {};
   }
 }
 
-export async function exchangeCode(env: Env, code: string): Promise<void> {
+export interface GoogleExchange {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  email: string; // lowercased
+  emailVerified: boolean;
+  name: string;
+  picture: string;
+}
+
+/** Exchanges an authorization code; identity comes from the ID token (received directly from Google), else userinfo. */
+export async function exchangeCode(env: Env, code: string): Promise<GoogleExchange> {
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -90,20 +100,39 @@ export async function exchangeCode(env: Env, code: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`token exchange failed: ${res.status}`);
   const j = (await res.json()) as { access_token: string; refresh_token?: string; expires_in: number; id_token?: string };
-  const existing = await getTokens(env);
-  const refresh = j.refresh_token ?? (existing && !existing.broken ? existing.refresh_token : '');
+  let id = decodeIdToken(j.id_token);
+  if (!id.email) {
+    const u = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${j.access_token}` } });
+    if (u.ok) id = (await u.json()) as typeof id;
+  }
+  return {
+    access_token: j.access_token,
+    refresh_token: j.refresh_token,
+    expires_in: j.expires_in,
+    email: (id.email ?? '').trim().toLowerCase(),
+    emailVerified: id.email_verified === true || id.email_verified === 'true',
+    name: id.name ?? '',
+    picture: id.picture ?? '',
+  };
+}
+
+/** Stores (encrypted) tokens for a user. Keeps the existing refresh token when Google does not send a new one. */
+export async function storeTokens(env: Env, userId: string, x: GoogleExchange): Promise<void> {
+  const existing = await getTokens(env, userId);
+  const refresh = x.refresh_token ?? (existing && !existing.broken ? existing.refresh_token : '');
   if (!refresh) throw new Error('no refresh token');
   await env.DB.prepare(
-    `INSERT INTO google_tokens (id, email, refresh_token, access_token, expires_at, updated_at)
-     VALUES (1, ?1, ?2, ?3, ?4, ?5)
-     ON CONFLICT(id) DO UPDATE SET email = ?1, refresh_token = ?2, access_token = ?3, expires_at = ?4, updated_at = ?5, broken = 0`,
+    `INSERT INTO google_tokens (user_id, email, refresh_token, access_token, expires_at, updated_at)
+     VALUES (?6, ?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(user_id) DO UPDATE SET email = ?1, refresh_token = ?2, access_token = ?3, expires_at = ?4, updated_at = ?5, broken = 0`,
   )
     .bind(
-      emailFromIdToken(j.id_token) || existing?.email || '',
+      x.email || existing?.email || '',
       await encryptString(env.SESSION_SECRET, refresh),
-      await encryptString(env.SESSION_SECRET, j.access_token),
-      Date.now() + j.expires_in * 1000,
+      await encryptString(env.SESSION_SECRET, x.access_token),
+      Date.now() + x.expires_in * 1000,
       new Date().toISOString(),
+      userId,
     )
     .run();
 }
@@ -117,7 +146,7 @@ export async function disconnect(env: Env): Promise<void> {
       /* best effort */
     }
   }
-  await env.DB.prepare('DELETE FROM google_tokens WHERE id = 1').run();
+  await env.DB.prepare('DELETE FROM google_tokens WHERE user_id = ?').bind(uidOf(env)).run();
 }
 
 /**
@@ -149,12 +178,13 @@ export async function getAccessToken(env: Env): Promise<string | null> {
   }
   const j = (await res.json()) as { access_token: string; expires_in: number };
   // Also upgrades legacy plaintext rows to encrypted storage.
-  await env.DB.prepare('UPDATE google_tokens SET access_token = ?1, refresh_token = ?2, expires_at = ?3, updated_at = ?4 WHERE id = 1')
+  await env.DB.prepare('UPDATE google_tokens SET access_token = ?1, refresh_token = ?2, expires_at = ?3, updated_at = ?4 WHERE user_id = ?5')
     .bind(
       await encryptString(env.SESSION_SECRET, j.access_token),
       await encryptString(env.SESSION_SECRET, t.refresh_token),
       Date.now() + j.expires_in * 1000,
       new Date().toISOString(),
+      uidOf(env),
     )
     .run();
   return j.access_token;

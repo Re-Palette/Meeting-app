@@ -1,8 +1,11 @@
 import { createContext, useContext } from 'react';
-import type { Settings } from '../../shared/types';
+import type { CurrentUser, Settings } from '../../shared/types';
 
 export interface AppCtx {
   settings: Settings | undefined;
+  /** Signed-in user (owner or invited member); null until /api/auth/me answers. */
+  user: CurrentUser | null;
+  isOwner: boolean;
   setSettings: (s: Settings) => void;
   tz: string;
   ownerName: string;
@@ -12,6 +15,8 @@ export interface AppCtx {
 
 export const AppContext = createContext<AppCtx>({
   settings: undefined,
+  user: null,
+  isOwner: false,
   setSettings: () => {},
   tz: 'Asia/Tokyo',
   ownerName: '',

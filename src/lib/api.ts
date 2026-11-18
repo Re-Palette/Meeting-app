@@ -1,5 +1,7 @@
 import type {
   AnalyticsData,
+  AuthMe,
+  Member,
   Booking,
   BookingRequest,
   BookingStatus,
@@ -61,7 +63,11 @@ export type GoogleCalendar = { id: string; summary: string; primary: boolean };
 export const api = {
   login: (password: string) => post<{ ok: true }>('/auth/login', { password }),
   logout: () => post<{ ok: true }>('/auth/logout'),
-  me: () => get<{ authenticated: boolean }>('/auth/me'),
+  me: () => get<AuthMe>('/auth/me'),
+
+  members: () => get<Member[]>('/members'),
+  inviteMember: (email: string) => post<Member>('/members', { email }),
+  removeMember: (email: string) => del<{ ok: true }>(`/members/${enc(email)}`),
 
   dashboard: () => get<DashboardData>('/dashboard'),
   calendarEvents: (from: string, to: string) =>

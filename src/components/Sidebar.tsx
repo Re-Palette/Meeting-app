@@ -45,7 +45,7 @@ const pillSpring = { type: 'spring', stiffness: 380, damping: 32 } as const;
 export function Sidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { ownerName } = useApp();
+  const { ownerName, user } = useApp();
   return (
     <aside className="sidebar">
       <Link to="/" className="sidebar__logo" aria-label="MeetFlow ホーム">
@@ -88,12 +88,12 @@ export function Sidebar() {
         </button>
       </div>
 
-      <UserBlock name={ownerName} />
+      <UserBlock name={user?.name || user?.email || ownerName} role={user?.role} />
     </aside>
   );
 }
 
-function UserBlock({ name }: { name: string }) {
+function UserBlock({ name, role }: { name: string; role?: 'owner' | 'member' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -109,7 +109,10 @@ function UserBlock({ name }: { name: string }) {
     <div className="user" ref={ref}>
       <button className="user__btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <Avatar name={name || 'M'} size={50} />
-        <span className="user__name">{name || 'オーナー'}</span>
+        <span className="user__text">
+          <span className="user__name">{name || 'オーナー'}</span>
+          {role === 'member' && <small className="user__role">メンバー</small>}
+        </span>
         <motion.span animate={{ rotate: open ? 180 : 0 }} className="user__chev">
           <ChevronDown size={18} />
         </motion.span>

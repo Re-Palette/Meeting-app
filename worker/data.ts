@@ -1,6 +1,6 @@
 import type { Booking, CalendarEvent, EventType, Settings } from '../shared/types.js';
 import type { Env } from './env.js';
-import { HttpError } from './env.js';
+import { HttpError, uidOf } from './env.js';
 import { getAccessToken, getTokens, freeBusy, listEvents } from './google.js';
 import { type IcsEvent, parseIcs } from './ics.js';
 import { type Interval } from './tz.js';
@@ -62,8 +62,13 @@ export function rowToBooking(r: Row): Booking {
   };
 }
 
+export async function ensureSettings(env: Env): Promise<void> {
+  await env.DB.prepare('INSERT OR IGNORE INTO settings (user_id) VALUES (?)').bind(uidOf(env)).run();
+}
+
 export async function loadSettings(env: Env): Promise<Settings> {
-  const r = await env.DB.prepare('SELECT * FROM settings WHERE id = 1').first<Row>();
+  const uid = uidOf(env);
+  const r = await env.DB.prepare('SELECT * FROM settings WHERE user_id = ?').bind(uid).first<Row>();
   const t = await getTokens(env);
   return {
     ownerName: (r?.owner_name as string) ?? '',
@@ -93,13 +98,14 @@ const ICS_TTL = 5 * 60 * 1000;
 const DAY_MS = 86400000;
 
 /** Throws when the feed cannot be fetched. */
-async function icsParsed(url: string, tz: string, from: number, to: number, now = Date.now()): Promise<IcsEvent[]> {
-  let e = icsCache.get(url);
+async function icsParsed(url: string, tz: string, from: number, to: number, scope = '', now = Date.now()): Promise<IcsEvent[]> {
+  const cacheKey = `${scope}|${url}`;
+  let e = icsCache.get(cacheKey);
   if (!e || now - e.at >= ICS_TTL) {
     const res = await fetch(url.replace(/^webcal:/i, 'https:'), { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`ics ${res.status}`);
     e = { at: now, text: await res.text(), tz: '', from: 0, to: 0, events: [] };
-    icsCache.set(url, e);
+    icsCache.set(cacheKey, e);
   }
   if (e.tz !== tz || from < e.from || to > e.to) {
     // Parse a wide window once so later queries within it are served from the parsed cache.
@@ -118,11 +124,11 @@ export function resetIcsCache(): void {
 }
 
 /** strict: a failing feed throws instead of being treated as "no events". */
-export async function icsEvents(settings: Settings, from: number, to: number, strict = false): Promise<CalendarEvent[]> {
+export async function icsEvents(settings: Settings, from: number, to: number, strict = false, scope = ''): Promise<CalendarEvent[]> {
   const lists = await Promise.all(
     settings.icsUrls.map(async (url, i) => {
       try {
-        return (await icsParsed(url, settings.timezone, from, to)).map(
+        return (await icsParsed(url, settings.timezone, from, to, scope)).map(
           (e, j): CalendarEvent => ({
             id: `ics:${i}:${e.uid || j}:${e.start}`,
             title: e.title || '予定あり',
@@ -143,18 +149,18 @@ export async function icsEvents(settings: Settings, from: number, to: number, st
 export async function bookingRows(env: Env, from: number, to: number, statuses: string[]): Promise<Booking[]> {
   const ph = statuses.map(() => '?').join(',');
   const { results } = await env.DB.prepare(
-    `SELECT * FROM bookings WHERE status IN (${ph}) AND start_at < ? AND end_at > ? ORDER BY start_at`,
+    `SELECT * FROM bookings WHERE user_id = ? AND status IN (${ph}) AND start_at < ? AND end_at > ? ORDER BY start_at`,
   )
-    .bind(...statuses, new Date(to).toISOString(), new Date(from).toISOString())
+    .bind(uidOf(env), ...statuses, new Date(to).toISOString(), new Date(from).toISOString())
     .all<Row>();
   return results.map(rowToBooking);
 }
 
-async function icsTagged(settings: Settings, from: number, to: number, strict: boolean): Promise<TaggedEvent[]> {
+async function icsTagged(settings: Settings, from: number, to: number, strict: boolean, scope: string): Promise<TaggedEvent[]> {
   const lists = await Promise.all(
     settings.icsUrls.map(async (url, i) => {
       try {
-        return (await icsParsed(url, settings.timezone, from, to)).map(
+        return (await icsParsed(url, settings.timezone, from, to, scope)).map(
           (e, j): TaggedEvent => ({ id: `ics:${i}:${e.uid || j}:${e.start}`, calendarId: `ics:${url}`, title: e.title, start: e.start, end: e.end }),
         );
       } catch (err) {
@@ -197,7 +203,7 @@ async function externalBusy(env: Env, settings: Settings, from: number, to: numb
     const pad = rulePadMs(rules);
     const [g, i] = await Promise.all([
       googleTagged(env, settings, from - pad, to + pad, strict),
-      icsTagged(settings, from - pad, to + pad, strict),
+      icsTagged(settings, from - pad, to + pad, strict, uidOf(env)),
     ]);
     const events = [...g, ...i];
     return [...events.map((e) => ({ start: e.start, end: e.end })), ...expandRules(rules, events).map((x) => x.block)];
@@ -217,7 +223,7 @@ async function externalBusy(env: Env, settings: Settings, from: number, to: numb
       return [];
     }
   })();
-  const ics = icsEvents(settings, from, to, strict);
+  const ics = icsEvents(settings, from, to, strict, uidOf(env));
   const [g, i] = await Promise.all([google, ics]);
   return [...g, ...i.map((e) => ({ start: Date.parse(e.start), end: Date.parse(e.end) }))];
 }
@@ -235,7 +241,7 @@ const BUSY_TTL = 60_000;
 /** In-memory 60s cache around externalBusy. Only successful results are cached. */
 async function cachedExternalBusy(env: Env, settings: Settings, from: number, to: number): Promise<Interval[]> {
   const v = hashStr(JSON.stringify([settings.googleCalendarIds, settings.icsUrls, settings.timezone, settings.googleConnected, activeRules(settings.busyRules)]));
-  const key = `${from}:${to}:${v}`;
+  const key = `${uidOf(env)}:${from}:${to}:${v}`;
   const now = Date.now();
   const hit = busyCache.get(key);
   if (hit && now - hit.at < BUSY_TTL) return hit.busy;
@@ -314,7 +320,7 @@ export async function getCalendarEvents(env: Env, settings: Settings, from: numb
     out.push(...perCal.flat());
   }
 
-  const ics = await icsTagged(settings, from - pad, to + pad, false);
+  const ics = await icsTagged(settings, from - pad, to + pad, false, uidOf(env));
   for (const e of ics) {
     tagged.push(e);
     if (overlaps(e.start, e.end)) {
