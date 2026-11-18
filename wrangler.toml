@@ -1,0 +1,19 @@
+name = "meetflow"
+main = "worker/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+binding = "ASSETS"
+run_worker_first = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meetflow"
+database_id = "00000000-0000-0000-0000-000000000000" # replace after `wrangler d1 create meetflow`
+migrations_dir = "migrations"
+
+[vars]
+APP_URL = "http://localhost:5173"

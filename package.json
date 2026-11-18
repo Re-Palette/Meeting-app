@@ -1,0 +1,36 @@
+{
+  "name": "meetflow",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"wrangler dev --port 8787\" \"vite\"",
+    "dev:web": "vite",
+    "dev:api": "wrangler dev --port 8787",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply meetflow --local",
+    "db:migrate:remote": "wrangler d1 migrations apply meetflow --remote",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "framer-motion": "^11.11.17",
+    "hono": "^4.6.12",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.6",
+    "wrangler": "^3.91.0"
+  }
+}
