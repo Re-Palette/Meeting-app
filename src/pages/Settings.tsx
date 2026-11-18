@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Settings, SettingsInput } from '../../shared/types';
 import { InstallCard } from '../components/InstallCard';
+import { BackupCard } from '../components/BackupCard';
 import { BusyRulesEditor, calendarOptions, ruleError } from '../components/BusyRules';
 import { ErrorState } from '../components/EmptyState';
 import { Avatar } from '../components/Avatar';
@@ -381,6 +382,8 @@ export default function SettingsPage() {
         </motion.section>
 
         <InstallCard />
+
+        <BackupCard />
 
         {isOwner && <MembersCard />}
 

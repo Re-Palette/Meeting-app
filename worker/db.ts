@@ -1,6 +1,7 @@
 // Minimal D1-style adapter over libSQL (Turso, or a local SQLite file).
 import { mkdirSync } from 'node:fs';
 import type { Client, InValue } from '@libsql/client';
+import { HttpError } from './env.js';
 
 export interface RunResult {
   meta: { changes: number };
@@ -72,11 +73,19 @@ export function dbFromClient(client: Client): Db {
   return { prepare: (sql) => new Stmt(async () => client, sql) };
 }
 
+export const DB_NOT_CONNECTED = 'データベースが接続されていません。Vercel の Storage で Turso を接続してください。';
+
+/** On Vercel the local file fallback would silently create an empty, non-persistent DB: refuse instead. */
+export function assertDatabaseConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.VERCEL === '1' && !env.TURSO_DATABASE_URL) throw new HttpError(503, DB_NOT_CONNECTED);
+}
+
 let shared: Promise<Client> | null = null;
 
 /** Lazily-created process-wide connection (reused across invocations on a warm instance). */
 export function createDb(env: NodeJS.ProcessEnv = process.env): Db {
   const get = (): Promise<Client> => {
+    assertDatabaseConfigured(env);
     shared ??= openClient(env.TURSO_DATABASE_URL || 'file:.data/local.db', env.TURSO_AUTH_TOKEN);
     return shared;
   };

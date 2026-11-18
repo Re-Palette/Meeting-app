@@ -16,6 +16,7 @@ import {
   rowToBooking,
   rowToEventType,
 } from './data.js';
+import { assertDatabaseConfigured } from './db.js';
 import { type Env, HttpError, uidOf } from './env.js';
 import { connectState, handleGoogleCallback, loginState } from './loginflow.js';
 import {
@@ -49,6 +50,12 @@ type AppEnv = { Bindings: Env; Variables: { user: UserRow } };
 type C = Context<AppEnv>;
 
 const app = new Hono<AppEnv>();
+
+// Refuse to run against an implicit local file DB on Vercel (would silently lose data).
+app.use('/api/*', async (_c, next) => {
+  assertDatabaseConfigured();
+  await next();
+});
 
 // Per-request Env: derive APP_URL from the request origin when it is not configured.
 app.use('*', async (c, next) => {
@@ -132,6 +139,37 @@ app.get('/api/auth/google', async (c) => {
   const base = c.env.APP_URL.replace(/\/$/, '');
   if (!google.googleConfigured(c.env) || !c.env.SESSION_SECRET) return c.redirect(`${base}/login?error=google`, 302);
   return c.redirect(google.buildAuthUrl(c.env, await loginState(c.env), 'select_account consent'), 302);
+});
+
+// ---------------------------------------------------------------- export (own data, no secrets)
+
+app.get('/api/export', async (c) => {
+  const user = c.get('user');
+  const settings = await loadSettings(c.env);
+  const [types, bookings] = await Promise.all([listEventTypes(c.env), allBookings(c.env)]);
+  const schema = await c.env.DB.prepare('SELECT name FROM _migrations ORDER BY name DESC LIMIT 1').first<{ name: string }>().catch(() => null);
+  const now = new Date();
+  const payload = {
+    exportedAt: now.toISOString(),
+    schemaVersion: schema?.name ?? '',
+    user: { id: user.id, email: user.email ?? '', role: user.role },
+    // Google tokens and every other secret are intentionally never included.
+    settings: {
+      ownerName: settings.ownerName,
+      timezone: settings.timezone,
+      googleEmail: settings.googleEmail,
+      googleCalendarIds: settings.googleCalendarIds,
+      googleTargetCalendarId: settings.googleTargetCalendarId,
+      icsUrls: settings.icsUrls,
+      busyRules: settings.busyRules,
+    },
+    eventTypes: types,
+    bookings,
+    ...(user.role === 'owner' ? { members: await listMembers(c.env) } : {}),
+  };
+  c.header('Content-Disposition', `attachment; filename="meetflow-backup-${now.toISOString().slice(0, 10)}.json"`);
+  c.header('Cache-Control', 'no-store');
+  return c.json(payload);
 });
 
 // ---------------------------------------------------------------- members (owner only)

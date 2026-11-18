@@ -10,7 +10,8 @@
     "build": "node scripts/migrate.mjs --if-configured && tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:restore": "node scripts/restore.mjs"
   },
   "dependencies": {
     "@libsql/client": "0.17.4",
