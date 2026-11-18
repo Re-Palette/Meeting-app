@@ -67,6 +67,11 @@ export async function openClient(url: string, authToken?: string): Promise<Clien
   return createClient({ url, authToken });
 }
 
+/** Wraps an already-open client (used by tests and scripts). */
+export function dbFromClient(client: Client): Db {
+  return { prepare: (sql) => new Stmt(async () => client, sql) };
+}
+
 let shared: Promise<Client> | null = null;
 
 /** Lazily-created process-wide connection (reused across invocations on a warm instance). */

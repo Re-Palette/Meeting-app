@@ -7,22 +7,29 @@ import type {
   PublicEventType,
   Settings,
 } from '../shared/types.js';
+import { COOKIE_NAME, SESSION_TTL_SEC, safeEqual } from './auth.js';
 import {
-  COOKIE_NAME,
-  SESSION_TTL_SEC,
-  parseCookies,
-  safeEqual,
-  signToken,
-  verifyToken,
-} from './auth.js';
-import {
+  ensureSettings,
   getBusy,
   getCalendarEvents,
   loadSettings,
   rowToBooking,
   rowToEventType,
 } from './data.js';
-import { type Env, HttpError } from './env.js';
+import { type Env, HttpError, uidOf } from './env.js';
+import { connectState, handleGoogleCallback, loginState } from './loginflow.js';
+import {
+  OWNER_ID,
+  type UserRow,
+  authMe,
+  bumpSession,
+  getUserById,
+  inviteMember,
+  issueSession,
+  listMembers,
+  removeMember,
+  userFromCookie,
+} from './users.js';
 import { clientIp, rateCheck, rateClear, rateHit } from './ratelimit.js';
 import * as google from './google.js';
 import { generateSlots, computeFreeHours } from './slots.js';
@@ -38,9 +45,10 @@ import { addDays, dateMinToUtc, isDateStr, diffDays, localDate } from './tz.js';
 import { validateBookingRequest, validateEventTypeInput, validateSettingsInput } from './validate.js';
 
 type Row = Record<string, unknown>;
-type C = Context<{ Bindings: Env }>;
+type AppEnv = { Bindings: Env; Variables: { user: UserRow } };
+type C = Context<AppEnv>;
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 // Per-request Env: derive APP_URL from the request origin when it is not configured.
 app.use('*', async (c, next) => {
@@ -66,27 +74,26 @@ async function readJson(c: C): Promise<unknown> {
 
 // ---------------------------------------------------------------- auth
 
-async function sessionVersion(env: Env): Promise<number> {
-  const r = await env.DB.prepare('SELECT session_version FROM settings WHERE id = 1').first<{ session_version: number }>();
-  return r?.session_version ?? 1;
-}
-
-async function hasValidSession(c: C): Promise<boolean> {
-  const token = parseCookies(c.req.header('Cookie'))[COOKIE_NAME];
-  if (!token) return false;
-  return verifyToken(c.env.SESSION_SECRET, `session:${await sessionVersion(c.env)}`, token);
-}
+const PUBLIC_API = (p: string) =>
+  p.startsWith('/api/auth/') || p.startsWith('/api/public/') || p === '/api/google/callback';
 
 app.use('/api/*', async (c, next) => {
   const p = new URL(c.req.url).pathname;
-  if (p.startsWith('/api/auth/') || p.startsWith('/api/public/') || p === '/api/google/callback') return next();
-  if (!(await hasValidSession(c))) throw new HttpError(401, 'ログインが必要です');
+  if (PUBLIC_API(p)) return next();
+  const user = await userFromCookie(c.env, c.req.header('Cookie'));
+  if (!user) throw new HttpError(401, 'ログインが必要です');
+  c.set('user', user);
+  c.env.userId = user.id; // every owner-side query is scoped to this user
   await next();
 });
 
+const requireOwner = (c: C): void => {
+  if (c.get('user').role !== 'owner') throw new HttpError(403, 'この操作はオーナーのみ可能です');
+};
+
 function cookieHeader(c: C, value: string, maxAge: number): string {
   const secure = new URL(c.req.url).protocol === 'https:' || c.env.APP_URL?.startsWith('https://');
-  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+  return `${COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
 
 const LOGIN_LIMIT_MSG = '試行回数が多すぎます。しばらくしてからお試しください';
@@ -104,37 +111,63 @@ app.post('/api/auth/login', async (c) => {
     throw new HttpError(401, 'パスワードが正しくありません');
   }
   await rateClear(c.env, key);
-  const token = await signToken(c.env.SESSION_SECRET, `session:${await sessionVersion(c.env)}`, SESSION_TTL_SEC);
-  c.header('Set-Cookie', cookieHeader(c, token, SESSION_TTL_SEC));
+  const owner = await getUserById(c.env, OWNER_ID);
+  if (!owner) throw new HttpError(500, 'オーナーアカウントが見つかりません。マイグレーションを実行してください');
+  c.header('Set-Cookie', cookieHeader(c, await issueSession(c.env, owner), SESSION_TTL_SEC));
   return c.json({ ok: true });
 });
 
 app.post('/api/auth/logout', async (c) => {
-  // Bumping the version revokes every session (only when the caller holds a valid one).
-  if (await hasValidSession(c)) {
-    await c.env.DB.prepare('UPDATE settings SET session_version = session_version + 1 WHERE id = 1').run();
-  }
+  // Bumping the version revokes this user's sessions only (when the caller holds a valid one).
+  const user = await userFromCookie(c.env, c.req.header('Cookie'));
+  if (user) await bumpSession(c.env, user.id);
   c.header('Set-Cookie', cookieHeader(c, '', 0));
   return c.json({ ok: true });
 });
 
-app.get('/api/auth/me', async (c) => c.json({ authenticated: await hasValidSession(c) }));
+app.get('/api/auth/me', async (c) => c.json(await authMe(c.env, await userFromCookie(c.env, c.req.header('Cookie')))));
+
+/** Google sign-in: redirects to Google; only invited users (or the owner) get a session in the callback. */
+app.get('/api/auth/google', async (c) => {
+  const base = c.env.APP_URL.replace(/\/$/, '');
+  if (!google.googleConfigured(c.env) || !c.env.SESSION_SECRET) return c.redirect(`${base}/login?error=google`, 302);
+  return c.redirect(google.buildAuthUrl(c.env, await loginState(c.env), 'select_account consent'), 302);
+});
+
+// ---------------------------------------------------------------- members (owner only)
+
+app.get('/api/members', async (c) => {
+  requireOwner(c);
+  return c.json(await listMembers(c.env));
+});
+
+app.post('/api/members', async (c) => {
+  requireOwner(c);
+  const body = (await readJson(c)) as { email?: unknown };
+  return c.json(await inviteMember(c.env, body?.email), 201);
+});
+
+app.delete('/api/members/:email', async (c) => {
+  requireOwner(c);
+  await removeMember(c.env, decodeURIComponent(c.req.param('email')));
+  return c.json({ ok: true });
+});
 
 // ---------------------------------------------------------------- helpers
 
 async function allBookings(env: Env): Promise<Booking[]> {
-  const { results } = await env.DB.prepare('SELECT * FROM bookings ORDER BY start_at').all<Row>();
+  const { results } = await env.DB.prepare('SELECT * FROM bookings WHERE user_id = ? ORDER BY start_at').bind(uidOf(env)).all<Row>();
   return results.map(rowToBooking);
 }
 
 async function getEventTypeById(env: Env, id: string): Promise<EventType> {
-  const r = await env.DB.prepare('SELECT * FROM event_types WHERE id = ?').bind(id).first<Row>();
+  const r = await env.DB.prepare('SELECT * FROM event_types WHERE id = ? AND user_id = ?').bind(id, uidOf(env)).first<Row>();
   if (!r) throw new HttpError(404, '日程調整ページが見つかりません');
   return rowToEventType(r);
 }
 
 async function getBooking(env: Env, id: string): Promise<Booking> {
-  const r = await env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(id).first<Row>();
+  const r = await env.DB.prepare('SELECT * FROM bookings WHERE id = ? AND user_id = ?').bind(id, uidOf(env)).first<Row>();
   if (!r) throw new HttpError(404, '予約が見つかりません');
   return rowToBooking(r);
 }
@@ -155,12 +188,12 @@ function withStats(types: EventType[], bookings: Booking[], tz: string, now: num
 }
 
 async function listEventTypes(env: Env): Promise<EventType[]> {
-  const { results } = await env.DB.prepare('SELECT * FROM event_types ORDER BY created_at').all<Row>();
+  const { results } = await env.DB.prepare('SELECT * FROM event_types WHERE user_id = ? ORDER BY created_at').bind(uidOf(env)).all<Row>();
   return results.map(rowToEventType);
 }
 
 async function setSyncError(env: Env, id: string, msg: string): Promise<void> {
-  await env.DB.prepare('UPDATE bookings SET sync_error = ?, updated_at = ? WHERE id = ?').bind(msg, new Date().toISOString(), id).run();
+  await env.DB.prepare('UPDATE bookings SET sync_error = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(msg, new Date().toISOString(), id, uidOf(env)).run();
 }
 
 async function syncToGoogle(env: Env, booking: Booking, settings: Settings): Promise<void> {
@@ -196,9 +229,9 @@ async function syncToGoogle(env: Env, booking: Booking, settings: Settings): Pro
   }
   const res = await env.DB.prepare(
     `UPDATE bookings SET google_event_id = ?, meet_url = ?, google_calendar_id = ?, sync_error = '', updated_at = ?
-     WHERE id = ? AND status = 'confirmed'`,
+     WHERE id = ? AND user_id = ? AND status = 'confirmed'`,
   )
-    .bind(ev.id, ev.meetUrl, calendarId, new Date().toISOString(), booking.id)
+    .bind(ev.id, ev.meetUrl, calendarId, new Date().toISOString(), booking.id, uidOf(env))
     .run();
   if (!res.meta.changes) {
     // Cancelled while the event was being created: do not leave an orphan in Google Calendar.
@@ -300,10 +333,10 @@ app.post('/api/event-types', async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO event_types (slug, title, description, duration_min, location, location_detail, color, active,
         require_approval, buffer_before_min, buffer_after_min, min_notice_hours, max_days_ahead, slot_interval_min,
-        availability, questions, id, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        availability, questions, id, created_at, user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
-      .bind(...etBindings(input), id, new Date().toISOString())
+      .bind(...etBindings(input), id, new Date().toISOString(), uidOf(c.env))
       .run();
   } catch (e) {
     if (String(e).includes('UNIQUE')) throw new HttpError(409, 'このURLは既に使われています');
@@ -322,9 +355,9 @@ app.put('/api/event-types/:id', async (c) => {
   await c.env.DB.prepare(
     `UPDATE event_types SET slug=?, title=?, description=?, duration_min=?, location=?, location_detail=?, color=?,
       active=?, require_approval=?, buffer_before_min=?, buffer_after_min=?, min_notice_hours=?, max_days_ahead=?,
-      slot_interval_min=?, availability=?, questions=? WHERE id=?`,
+      slot_interval_min=?, availability=?, questions=? WHERE id=? AND user_id=?`,
   )
-    .bind(...etBindings(input), id)
+    .bind(...etBindings(input), id, uidOf(c.env))
     .run();
   return c.json(await getEventTypeById(c.env, id));
 });
@@ -332,7 +365,7 @@ app.put('/api/event-types/:id', async (c) => {
 app.delete('/api/event-types/:id', async (c) => {
   const id = c.req.param('id');
   await getEventTypeById(c.env, id);
-  await c.env.DB.prepare('DELETE FROM event_types WHERE id = ?').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM event_types WHERE id = ? AND user_id = ?').bind(id, uidOf(c.env)).run();
   return c.json({ ok: true });
 });
 
@@ -345,8 +378,8 @@ app.get('/api/bookings', async (c) => {
     throw new HttpError(400, 'ステータスの指定が正しくありません');
   }
   if (!['upcoming', 'past', 'all'].includes(scope)) throw new HttpError(400, 'スコープの指定が正しくありません');
-  const where: string[] = [];
-  const binds: string[] = [];
+  const where: string[] = ['user_id = ?'];
+  const binds: string[] = [uidOf(c.env)];
   const nowIso = new Date().toISOString();
   if (status) {
     where.push('status = ?');
@@ -361,7 +394,7 @@ app.get('/api/bookings', async (c) => {
   }
   const order = scope === 'upcoming' ? 'ASC' : 'DESC';
   const { results } = await c.env.DB.prepare(
-    `SELECT * FROM bookings ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY start_at ${order}`,
+    `SELECT * FROM bookings WHERE ${where.join(' AND ')} ORDER BY start_at ${order}`,
   )
     .bind(...binds)
     .all<Row>();
@@ -371,8 +404,8 @@ app.get('/api/bookings', async (c) => {
 app.post('/api/bookings/:id/approve', async (c) => {
   const b = await getBooking(c.env, c.req.param('id'));
   if (b.status !== 'pending') throw new HttpError(409, '承認待ちの予約ではありません');
-  const res = await c.env.DB.prepare("UPDATE bookings SET status='confirmed', updated_at=? WHERE id=? AND status='pending'")
-    .bind(new Date().toISOString(), b.id)
+  const res = await c.env.DB.prepare("UPDATE bookings SET status='confirmed', updated_at=? WHERE id=? AND user_id=? AND status='pending'")
+    .bind(new Date().toISOString(), b.id, uidOf(c.env))
     .run();
   if (!res.meta.changes) throw new HttpError(409, '承認待ちの予約ではありません');
   const settings = await loadSettings(c.env);
@@ -382,8 +415,8 @@ app.post('/api/bookings/:id/approve', async (c) => {
 
 app.post('/api/bookings/:id/decline', async (c) => {
   const b = await getBooking(c.env, c.req.param('id'));
-  const res = await c.env.DB.prepare("UPDATE bookings SET status='declined', updated_at=? WHERE id=? AND status='pending'")
-    .bind(new Date().toISOString(), b.id)
+  const res = await c.env.DB.prepare("UPDATE bookings SET status='declined', updated_at=? WHERE id=? AND user_id=? AND status='pending'")
+    .bind(new Date().toISOString(), b.id, uidOf(c.env))
     .run();
   if (!res.meta.changes) throw new HttpError(409, '承認待ちの予約ではありません');
   return c.json(await getBooking(c.env, b.id));
@@ -392,14 +425,14 @@ app.post('/api/bookings/:id/decline', async (c) => {
 app.post('/api/bookings/:id/cancel', async (c) => {
   const b = await getBooking(c.env, c.req.param('id'));
   const res = await c.env.DB.prepare(
-    "UPDATE bookings SET status='cancelled', updated_at=? WHERE id=? AND status IN ('pending','confirmed')",
+    "UPDATE bookings SET status='cancelled', updated_at=? WHERE id=? AND user_id=? AND status IN ('pending','confirmed')",
   )
-    .bind(new Date().toISOString(), b.id)
+    .bind(new Date().toISOString(), b.id, uidOf(c.env))
     .run();
   if (!res.meta.changes) throw new HttpError(409, 'この予約はキャンセルできません');
   if (b.googleEventId) {
     try {
-      const row = await c.env.DB.prepare('SELECT google_calendar_id FROM bookings WHERE id = ?').bind(b.id).first<{ google_calendar_id: string }>();
+      const row = await c.env.DB.prepare('SELECT google_calendar_id FROM bookings WHERE id = ? AND user_id = ?').bind(b.id, uidOf(c.env)).first<{ google_calendar_id: string }>();
       const settings = await loadSettings(c.env);
       await google.deleteEvent(c.env, row?.google_calendar_id || settings.googleTargetCalendarId || 'primary', b.googleEventId);
     } catch (e) {
@@ -412,14 +445,18 @@ app.post('/api/bookings/:id/cancel', async (c) => {
 
 // ---------------------------------------------------------------- settings
 
-app.get('/api/settings', async (c) => c.json(await loadSettings(c.env)));
+app.get('/api/settings', async (c) => {
+  await ensureSettings(c.env);
+  return c.json(await loadSettings(c.env));
+});
 
 app.put('/api/settings', async (c) => {
   const i = validateSettingsInput(await readJson(c));
+  await ensureSettings(c.env);
   await c.env.DB.prepare(
-    `UPDATE settings SET owner_name=?, timezone=?, google_calendar_ids=?, google_target_calendar_id=?, ics_urls=?, busy_rules=? WHERE id=1`,
+    `UPDATE settings SET owner_name=?, timezone=?, google_calendar_ids=?, google_target_calendar_id=?, ics_urls=?, busy_rules=? WHERE user_id=?`,
   )
-    .bind(i.ownerName, i.timezone, JSON.stringify(i.googleCalendarIds), i.googleTargetCalendarId, JSON.stringify(i.icsUrls), JSON.stringify(i.busyRules))
+    .bind(i.ownerName, i.timezone, JSON.stringify(i.googleCalendarIds), i.googleTargetCalendarId, JSON.stringify(i.icsUrls), JSON.stringify(i.busyRules), uidOf(c.env))
     .run();
   return c.json(await loadSettings(c.env));
 });
@@ -436,24 +473,17 @@ app.get('/api/google/auth-url', async (c) => {
   if (!google.googleConfigured(c.env)) {
     throw new HttpError(400, 'Google連携が設定されていません(GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)');
   }
-  const state = await signToken(c.env.SESSION_SECRET, 'google-state', 600);
-  return c.json({ url: google.buildAuthUrl(c.env, state) });
+  return c.json({ url: google.buildAuthUrl(c.env, await connectState(c.env, c.get('user').id)) });
 });
 
 app.get('/api/google/callback', async (c) => {
   const base = (c.env.APP_URL ?? '').replace(/\/$/, '');
-  const fail = () => c.redirect(`${base}/settings?google=error`, 302);
-  const code = c.req.query('code');
-  const state = c.req.query('state');
-  if (c.req.query('error') || !code) return fail();
-  if (!(await verifyToken(c.env.SESSION_SECRET, 'google-state', state))) return fail();
-  try {
-    await google.exchangeCode(c.env, code);
-  } catch (e) {
-    console.error(e);
-    return fail();
+  const r = await handleGoogleCallback(c.env, { code: c.req.query('code'), state: c.req.query('state'), error: c.req.query('error') });
+  if (r.sessionUserId) {
+    const u = await getUserById(c.env, r.sessionUserId);
+    if (u) c.header('Set-Cookie', cookieHeader(c, await issueSession(c.env, u), SESSION_TTL_SEC));
   }
-  return c.redirect(`${base}/settings?google=connected`, 302);
+  return c.redirect(`${base}${r.location}`, 302);
 });
 
 app.post('/api/google/disconnect', async (c) => {
@@ -463,15 +493,16 @@ app.post('/api/google/disconnect', async (c) => {
 
 // ---------------------------------------------------------------- public
 
-async function activeEventTypeBySlug(env: Env, slug: string): Promise<EventType> {
+/** Resolves the event type and scopes a copy of Env to the user who owns it. */
+async function publicEventType(env: Env, slug: string): Promise<{ et: EventType; uenv: Env }> {
   const r = await env.DB.prepare('SELECT * FROM event_types WHERE slug = ? AND active = 1').bind(slug).first<Row>();
   if (!r) throw new HttpError(404, 'このページは見つかりません');
-  return rowToEventType(r);
+  return { et: rowToEventType(r), uenv: { ...env, userId: r.user_id as string } };
 }
 
 app.get('/api/public/event-types/:slug', async (c) => {
-  const et = await activeEventTypeBySlug(c.env, c.req.param('slug'));
-  const settings = await loadSettings(c.env);
+  const { et, uenv } = await publicEventType(c.env, c.req.param('slug'));
+  const settings = await loadSettings(uenv);
   const out: PublicEventType = {
     slug: et.slug,
     title: et.title,
@@ -500,8 +531,8 @@ async function slotsFor(env: Env, et: EventType, settings: Settings, fromDate: s
 
 app.get('/api/public/event-types/:slug/slots', async (c) => {
   await rateHit(c.env, `slots:${clientIp(c.req.raw)}`, 120, 10 * 60_000, 'アクセスが多すぎます。しばらくしてからお試しください');
-  const et = await activeEventTypeBySlug(c.env, c.req.param('slug'));
-  const settings = await loadSettings(c.env);
+  const { et, uenv } = await publicEventType(c.env, c.req.param('slug'));
+  const settings = await loadSettings(uenv);
   const now = Date.now();
   const today = localDate(now, settings.timezone);
   const from = c.req.query('from') ?? today;
@@ -509,14 +540,14 @@ app.get('/api/public/event-types/:slug/slots', async (c) => {
   if (!isDateStr(from) || !isDateStr(to)) throw new HttpError(400, '日付は YYYY-MM-DD 形式で指定してください');
   if (to < from) throw new HttpError(400, '終了日は開始日以降を指定してください');
   if (diffDays(from, to) > 42) throw new HttpError(400, '期間は42日以内で指定してください');
-  return c.json({ timezone: settings.timezone, slots: await slotsFor(c.env, et, settings, from, to, now, true) });
+  return c.json({ timezone: settings.timezone, slots: await slotsFor(uenv, et, settings, from, to, now, true) });
 });
 
 app.post('/api/public/event-types/:slug/book', async (c) => {
   await rateHit(c.env, `book:${clientIp(c.req.raw)}`, 5, 3600_000, '予約リクエストが多すぎます。しばらくしてからお試しください');
-  const et = await activeEventTypeBySlug(c.env, c.req.param('slug'));
+  const { et, uenv } = await publicEventType(c.env, c.req.param('slug'));
   const req = validateBookingRequest(await readJson(c), et);
-  const settings = await loadSettings(c.env);
+  const settings = await loadSettings(uenv);
   const now = Date.now();
   const emailCount = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM bookings WHERE lower(guest_email) = ? AND status IN ('pending','confirmed') AND end_at > ?",
@@ -527,7 +558,7 @@ app.post('/api/public/event-types/:slug/book', async (c) => {
     throw new HttpError(429, 'このメールアドレスでは、これ以上予約できません(上限3件)。');
   }
   const day = localDate(Date.parse(req.start), settings.timezone);
-  const slots = await slotsFor(c.env, et, settings, day, day, now, false);
+  const slots = await slotsFor(uenv, et, settings, day, day, now, false);
   const slot = slots.find((s) => Date.parse(s.start) === Date.parse(req.start));
   if (!slot) throw new HttpError(409, '申し訳ありません、この時間は既に埋まっています。別の時間をお選びください');
 
@@ -537,9 +568,9 @@ app.post('/api/public/event-types/:slug/book', async (c) => {
   // Atomic guard: insert only when no pending/confirmed booking overlaps this interval.
   const res = await c.env.DB.prepare(
     `INSERT INTO bookings (id, event_type_id, event_title, duration_min, location, location_detail, start_at, end_at,
-       guest_name, guest_email, guest_company, notes, answers, status, meet_url, google_event_id, created_at, updated_at)
-     SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'','',?15,?15
-     WHERE NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('pending','confirmed') AND start_at < ?17 AND end_at > ?16)`,
+       guest_name, guest_email, guest_company, notes, answers, status, meet_url, google_event_id, created_at, updated_at, user_id)
+     SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'','',?15,?15,?18
+     WHERE NOT EXISTS (SELECT 1 FROM bookings WHERE user_id = ?18 AND status IN ('pending','confirmed') AND start_at < ?17 AND end_at > ?16)`,
   )
     .bind(
       id, et.id, et.title, et.durationMin, et.location, et.locationDetail, slot.start, slot.end,
@@ -547,12 +578,13 @@ app.post('/api/public/event-types/:slug/book', async (c) => {
       // overlap guard widened by this event type's buffers
       new Date(Date.parse(slot.start) - et.bufferBeforeMin * 60000).toISOString(),
       new Date(Date.parse(slot.end) + et.bufferAfterMin * 60000).toISOString(),
+      uidOf(uenv),
     )
     .run();
   if (!res.meta.changes) throw new HttpError(409, '申し訳ありません、この時間は既に埋まっています。別の時間をお選びください');
 
-  if (status === 'confirmed') await syncToGoogle(c.env, await getBooking(c.env, id), settings);
-  return c.json(await getBooking(c.env, id), 201);
+  if (status === 'confirmed') await syncToGoogle(uenv, await getBooking(uenv, id), settings);
+  return c.json(await getBooking(uenv, id), 201);
 });
 
 export default app;
