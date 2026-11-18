@@ -6,6 +6,7 @@ import type { Settings, SettingsInput } from '../../shared/types';
 import { InstallCard } from '../components/InstallCard';
 import { BusyRulesEditor, calendarOptions, ruleError } from '../components/BusyRules';
 import { ErrorState } from '../components/EmptyState';
+import { Avatar } from '../components/Avatar';
 import { GoogleLogo } from '../components/GoogleLogo';
 import { MembersCard } from '../components/Members';
 import { Skel } from '../components/Skeleton';
@@ -30,7 +31,7 @@ function allTimezones(): string[] {
 }
 
 export default function SettingsPage() {
-  const { settings: ctxSettings, setSettings: setCtx, isOwner } = useApp();
+  const { settings: ctxSettings, setSettings: setCtx, isOwner, user } = useApp();
   const toast = useToast();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -176,11 +177,25 @@ export default function SettingsPage() {
           {!form ? (
             <Skel h={100} />
           ) : (
+            <>
+            {user && (
+              <div className="profile__who">
+                <Avatar name={form.ownerName || user.email || 'M'} size={52} src={user.picture} />
+                <div>
+                  <b>{form.ownerName || user.name || 'オーナー'}</b>
+                  <small>
+                    {user.email || 'Google未連携'}
+                    <span className={`badge ${user.role === 'owner' ? 'badge--owner' : 'badge--live'}`}>{user.role === 'owner' ? 'オーナー' : 'メンバー'}</span>
+                  </small>
+                </div>
+              </div>
+            )}
             <div className="form-grid">
               <label className="field">
                 <span className="field__label">表示名</span>
                 <input className="input" value={form.ownerName} onChange={(e) => setForm({ ...form, ownerName: e.target.value })} placeholder="鈴木 陽大" />
                 <span className="field__hint">ホームのあいさつと公開予約ページに表示されます。</span>
+                {user?.email && <span className="field__hint">Googleアカウントの名前が自動で入ります。変更すると、その名前が優先されます。</span>}
               </label>
               <label className="field">
                 <span className="field__label">タイムゾーン</span>
@@ -194,6 +209,7 @@ export default function SettingsPage() {
                 <span className="field__hint">受付時間はこのタイムゾーンで解釈されます。</span>
               </label>
             </div>
+            </>
           )}
         </motion.section>
 

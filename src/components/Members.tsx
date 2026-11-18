@@ -123,7 +123,7 @@ export function MembersCard() {
                 exit={{ opacity: 0, x: 40, height: 0, paddingTop: 0, paddingBottom: 0 }}
                 transition={{ type: 'spring', stiffness: 380, damping: 34 }}
               >
-                <Avatar name={m.name || m.email} size={44} />
+                <Avatar name={m.name || m.email} size={44} src={m.picture} />
                 <span className="mrow__main">
                   <span className={`mrow__name${m.name ? '' : ' is-empty'}`}>{m.name || '未ログイン'}</span>
                   <span className="mrow__email">{m.email || '（Google未連携）'}</span>

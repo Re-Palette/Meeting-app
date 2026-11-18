@@ -88,12 +88,12 @@ export function Sidebar() {
         </button>
       </div>
 
-      <UserBlock name={user?.name || user?.email || ownerName} role={user?.role} />
+      <UserBlock name={user?.name || user?.email || ownerName} role={user?.role} picture={user?.picture} />
     </aside>
   );
 }
 
-function UserBlock({ name, role }: { name: string; role?: 'owner' | 'member' }) {
+function UserBlock({ name, role, picture }: { name: string; role?: 'owner' | 'member'; picture?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -108,7 +108,7 @@ function UserBlock({ name, role }: { name: string; role?: 'owner' | 'member' }) 
   return (
     <div className="user" ref={ref}>
       <button className="user__btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <Avatar name={name || 'M'} size={50} />
+        <Avatar name={name || 'M'} size={50} src={picture} />
         <span className="user__text">
           <span className="user__name">{name || 'オーナー'}</span>
           {role === 'member' && <small className="user__role">メンバー</small>}

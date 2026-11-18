@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 const PALETTE = [
   ['#7fe0cf', '#2fbfab'],
   ['#a9b4ff', '#6e6be6'],
@@ -21,7 +23,16 @@ export function initials(name: string) {
   return parts[0].slice(0, 1);
 }
 
-export function Avatar({ name, size = 44, person = false }: { name: string; size?: number; person?: boolean }) {
+export function Avatar({ name, size = 44, person = false, src = '' }: { name: string; size?: number; person?: boolean; src?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (src && !failed) {
+    return (
+      <span className="avatar avatar--photo" style={{ width: size, height: size }}>
+        <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" loading="lazy" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
   if (person) {
     return (
       <span className="avatar avatar--person" style={{ width: size, height: size }} aria-hidden>
