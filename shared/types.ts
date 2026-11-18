@@ -87,6 +87,25 @@ export interface Settings {
   googleCalendarIds: string[]; // calendars checked for busy time, default ['primary']
   googleTargetCalendarId: string; // calendar that new bookings are written to, default 'primary'
   icsUrls: string[]; // extra private iCal feeds (iCloud, Outlook...) treated as busy
+  busyRules: BusyRule[]; // extra blocked time around specific calendar events (e.g. 90 min after school)
+}
+
+/**
+ * Extra blocked time around matching calendar events. An event matches when BOTH conditions hold:
+ * - calendarId is '' (any checked Google calendar or ICS feed) or equals the event's Google calendar id
+ *   (ICS feeds use the id `ics:<feed url>`)
+ * - keyword is '' or the event title contains it (case-insensitive)
+ * At least one of calendarId / keyword must be non-empty.
+ * Matching events block [start - beforeMin, end + afterMin] for booking.
+ */
+export interface BusyRule {
+  id: string;
+  label: string; // owner's note, e.g. 学校のあと
+  calendarId: string;
+  keyword: string;
+  beforeMin: number; // 0..720
+  afterMin: number; // 0..720
+  enabled: boolean;
 }
 
 export type SettingsInput = Omit<Settings, 'googleConnected' | 'googleEmail'>;
