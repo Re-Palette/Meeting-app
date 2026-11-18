@@ -11,6 +11,7 @@ const settings = (icsUrls: string[]): Settings => ({
   googleCalendarIds: ['primary'],
   googleTargetCalendarId: 'primary',
   icsUrls,
+  busyRules: [],
 });
 
 const fakeEnv = (): Env => {

@@ -1,4 +1,4 @@
-import type { BookingRequest, EventType, EventTypeInput, Question, SettingsInput, WeeklyAvailability } from '../shared/types.js';
+import type { BookingRequest, BusyRule, EventType, EventTypeInput, Question, SettingsInput, WeeklyAvailability } from '../shared/types.js';
 import { HttpError } from './env.js';
 import { isValidTimezone, parseHM } from './tz.js';
 
@@ -82,6 +82,33 @@ export function validateEventTypeInput(body: unknown): EventTypeInput {
   };
 }
 
+export function validateBusyRules(v: unknown, googleIds: string[], icsUrls: string[]): BusyRule[] {
+  if (!Array.isArray(v)) bad('ブロックルールの形式が正しくありません');
+  if (v.length > 20) bad('ブロックルールは20件以内で指定してください');
+  const allowed = new Set(['', ...googleIds, ...icsUrls.map((u) => `ics:${u}`)]);
+  const seen = new Set<string>();
+  return v.map((raw) => {
+    if (!raw || typeof raw !== 'object') bad('ブロックルールの形式が正しくありません');
+    const r = raw as Record<string, unknown>;
+    const id = str(r.id, 'ルールID', 64, true);
+    if (seen.has(id)) bad('ルールIDが重複しています');
+    seen.add(id);
+    const calendarId = typeof r.calendarId === 'string' ? r.calendarId.trim() : r.calendarId === undefined ? '' : bad('対象カレンダーの形式が正しくありません');
+    const keyword = str(r.keyword, 'キーワード', 60);
+    if (!calendarId && !keyword) bad('対象カレンダーまたはキーワードのどちらかを指定してください');
+    if (!allowed.has(calendarId)) bad('対象カレンダーが連携中のカレンダーまたはICSに含まれていません');
+    return {
+      id,
+      label: str(r.label, 'ラベル', 60),
+      calendarId,
+      keyword,
+      beforeMin: int(r.beforeMin ?? 0, '前の時間(分)', 0, 720),
+      afterMin: int(r.afterMin ?? 0, '後の時間(分)', 0, 720),
+      enabled: !!r.enabled,
+    };
+  });
+}
+
 export function validateSettingsInput(body: unknown): SettingsInput {
   if (!body || typeof body !== 'object') bad('リクエストの形式が正しくありません');
   const b = body as Record<string, unknown>;
@@ -95,12 +122,14 @@ export function validateSettingsInput(body: unknown): SettingsInput {
     if (!/^(https?|webcal):\/\//i.test(u) || u.length > 2000) bad('ICSのURLはhttp(s)またはwebcalで始まる必要があります');
   }
   const ids = strArr(b.googleCalendarIds ?? [], 'カレンダー', 50);
+  const busyRules = validateBusyRules(b.busyRules ?? [], ids, icsUrls);
   return {
     ownerName: str(b.ownerName, '名前', 100),
     timezone: b.timezone as string,
     googleCalendarIds: ids,
     googleTargetCalendarId: str(b.googleTargetCalendarId ?? 'primary', '書き込み先カレンダー', 300) || 'primary',
     icsUrls,
+    busyRules,
   };
 }
 

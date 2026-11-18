@@ -4,6 +4,7 @@ import { HttpError } from './env.js';
 import { getAccessToken, getTokens, freeBusy, listEvents } from './google.js';
 import { type IcsEvent, parseIcs } from './ics.js';
 import { type Interval } from './tz.js';
+import { type TaggedEvent, activeRules, expandRules, rulePadMs } from './rules.js';
 
 type Row = Record<string, unknown>;
 
@@ -72,6 +73,7 @@ export async function loadSettings(env: Env): Promise<Settings> {
     googleCalendarIds: parseJson<string[]>(r?.google_calendar_ids, ['primary']),
     googleTargetCalendarId: (r?.google_target_calendar_id as string) ?? 'primary',
     icsUrls: parseJson<string[]>(r?.ics_urls, []),
+    busyRules: parseJson<Settings['busyRules']>(r?.busy_rules, []),
   };
 }
 
@@ -148,8 +150,59 @@ export async function bookingRows(env: Env, from: number, to: number, statuses: 
   return results.map(rowToBooking);
 }
 
-/** Google freebusy + ICS (the parts that need network). Strict mode throws on any failure. */
+async function icsTagged(settings: Settings, from: number, to: number, strict: boolean): Promise<TaggedEvent[]> {
+  const lists = await Promise.all(
+    settings.icsUrls.map(async (url, i) => {
+      try {
+        return (await icsParsed(url, settings.timezone, from, to)).map(
+          (e, j): TaggedEvent => ({ id: `ics:${i}:${e.uid || j}:${e.start}`, calendarId: `ics:${url}`, title: e.title, start: e.start, end: e.end }),
+        );
+      } catch (err) {
+        if (strict) throw err;
+        return [];
+      }
+    }),
+  );
+  return lists.flat();
+}
+
+/** Google events with titles (events.list) for every checked calendar. */
+async function googleTagged(env: Env, settings: Settings, from: number, to: number, strict: boolean): Promise<TaggedEvent[]> {
+  const tokens = await getTokens(env);
+  if (!tokens || !settings.googleCalendarIds.length) return [];
+  if (tokens.broken) {
+    if (strict) throw new Error('google connection broken');
+    return [];
+  }
+  const lists = await Promise.all(
+    settings.googleCalendarIds.map(async (calId) => {
+      try {
+        return (await listEvents(env, calId, from, to, settings.timezone)).map(
+          (e): TaggedEvent => ({ id: e.id, calendarId: calId, title: e.title, start: e.start, end: e.end }),
+        );
+      } catch (err) {
+        if (strict) throw err;
+        return [];
+      }
+    }),
+  );
+  return lists.flat();
+}
+
+/** Google + ICS busy time (network). Strict mode throws on any failure. */
 async function externalBusy(env: Env, settings: Settings, from: number, to: number, strict: boolean): Promise<Interval[]> {
+  const rules = activeRules(settings.busyRules);
+  if (rules.length) {
+    // Rules need titles: use events.list (not freebusy) and widen the window by the largest margin.
+    const pad = rulePadMs(rules);
+    const [g, i] = await Promise.all([
+      googleTagged(env, settings, from - pad, to + pad, strict),
+      icsTagged(settings, from - pad, to + pad, strict),
+    ]);
+    const events = [...g, ...i];
+    return [...events.map((e) => ({ start: e.start, end: e.end })), ...expandRules(rules, events).map((x) => x.block)];
+  }
+
   const tokens = await getTokens(env);
   const google = (async (): Promise<Interval[]> => {
     if (!tokens || !settings.googleCalendarIds.length) return [];
@@ -181,7 +234,7 @@ const BUSY_TTL = 60_000;
 
 /** In-memory 60s cache around externalBusy. Only successful results are cached. */
 async function cachedExternalBusy(env: Env, settings: Settings, from: number, to: number): Promise<Interval[]> {
-  const v = hashStr(JSON.stringify([settings.googleCalendarIds, settings.icsUrls, settings.timezone, settings.googleConnected]));
+  const v = hashStr(JSON.stringify([settings.googleCalendarIds, settings.icsUrls, settings.timezone, settings.googleConnected, activeRules(settings.busyRules)]));
   const key = `${from}:${to}:${v}`;
   const now = Date.now();
   const hit = busyCache.get(key);
@@ -224,11 +277,16 @@ export async function getBusy(env: Env, settings: Settings, from: number, to: nu
   return [...external, ...bookings.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }))];
 }
 
-/** Calendar view: Google events (real titles, falls back to freebusy), ICS, bookings. */
+/** Calendar view: Google events (real titles, falls back to freebusy), ICS, rule-generated blocks, bookings. */
 export async function getCalendarEvents(env: Env, settings: Settings, from: number, to: number): Promise<CalendarEvent[]> {
   const bookings = await bookingRows(env, from, to, ['pending', 'confirmed']);
   const own = new Set(bookings.map((b) => b.googleEventId).filter(Boolean));
+  const rules = activeRules(settings.busyRules);
+  const pad = rulePadMs(rules);
   const out: CalendarEvent[] = [];
+  const tagged: TaggedEvent[] = []; // events (with titles) available for rule matching
+  const overlaps = (s: number, e: number) => e > from && s < to;
+  const iso = (ms: number) => new Date(ms).toISOString();
 
   let gToken: string | null = null;
   try {
@@ -240,25 +298,15 @@ export async function getCalendarEvents(env: Env, settings: Settings, from: numb
     const perCal = await Promise.all(
       settings.googleCalendarIds.map(async (calId) => {
         try {
-          return (await listEvents(env, calId, from, to, settings.timezone))
-            .filter((e) => !own.has(e.id))
-            .map((e): CalendarEvent => ({
-              id: `g:${calId}:${e.id}`,
-              title: e.title,
-              start: new Date(e.start).toISOString(),
-              end: new Date(e.end).toISOString(),
-              source: 'google',
-            }));
+          const evs = (await listEvents(env, calId, from - pad, to + pad, settings.timezone)).filter((e) => !own.has(e.id));
+          for (const e of evs) tagged.push({ id: e.id, calendarId: calId, title: e.title, start: e.start, end: e.end });
+          return evs
+            .filter((e) => overlaps(e.start, e.end))
+            .map((e): CalendarEvent => ({ id: `g:${calId}:${e.id}`, title: e.title, start: iso(e.start), end: iso(e.end), source: 'google' }));
         } catch {
           const busy = await freeBusy(env, [calId], from, to).catch(() => [] as Interval[]);
           return busy.map(
-            (b, i): CalendarEvent => ({
-              id: `gb:${calId}:${b.start}:${i}`,
-              title: '予定あり',
-              start: new Date(b.start).toISOString(),
-              end: new Date(b.end).toISOString(),
-              source: 'google',
-            }),
+            (b, i): CalendarEvent => ({ id: `gb:${calId}:${b.start}:${i}`, title: '予定あり', start: iso(b.start), end: iso(b.end), source: 'google' }),
           );
         }
       }),
@@ -266,7 +314,25 @@ export async function getCalendarEvents(env: Env, settings: Settings, from: numb
     out.push(...perCal.flat());
   }
 
-  out.push(...(await icsEvents(settings, from, to).catch(() => [] as CalendarEvent[])));
+  const ics = await icsTagged(settings, from - pad, to + pad, false);
+  for (const e of ics) {
+    tagged.push(e);
+    if (overlaps(e.start, e.end)) {
+      out.push({ id: e.id ?? `ics:${e.start}`, title: e.title || '予定あり', start: iso(e.start), end: iso(e.end), source: 'ics' });
+    }
+  }
+
+  for (const x of expandRules(rules, tagged)) {
+    if (!overlaps(x.block.start, x.block.end)) continue;
+    out.push({
+      id: `rule:${x.rule.id}:${x.event.id ?? x.event.start}`,
+      title: `${x.rule.label || 'ブロック'}（自動）`,
+      start: iso(x.block.start),
+      end: iso(x.block.end),
+      source: x.event.calendarId.startsWith('ics:') ? 'ics' : 'google',
+    });
+  }
+
   for (const b of bookings) {
     out.push({
       id: `b:${b.id}`,

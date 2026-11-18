@@ -1,0 +1,1 @@
+ALTER TABLE settings ADD COLUMN busy_rules TEXT NOT NULL DEFAULT '[]';

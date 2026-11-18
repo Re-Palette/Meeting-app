@@ -417,9 +417,9 @@ app.get('/api/settings', async (c) => c.json(await loadSettings(c.env)));
 app.put('/api/settings', async (c) => {
   const i = validateSettingsInput(await readJson(c));
   await c.env.DB.prepare(
-    `UPDATE settings SET owner_name=?, timezone=?, google_calendar_ids=?, google_target_calendar_id=?, ics_urls=? WHERE id=1`,
+    `UPDATE settings SET owner_name=?, timezone=?, google_calendar_ids=?, google_target_calendar_id=?, ics_urls=?, busy_rules=? WHERE id=1`,
   )
-    .bind(i.ownerName, i.timezone, JSON.stringify(i.googleCalendarIds), i.googleTargetCalendarId, JSON.stringify(i.icsUrls))
+    .bind(i.ownerName, i.timezone, JSON.stringify(i.googleCalendarIds), i.googleTargetCalendarId, JSON.stringify(i.icsUrls), JSON.stringify(i.busyRules))
     .run();
   return c.json(await loadSettings(c.env));
 });
