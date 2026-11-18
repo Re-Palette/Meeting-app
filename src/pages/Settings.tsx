@@ -30,16 +30,30 @@ function allTimezones(): string[] {
   return FALLBACK_TZ;
 }
 
+let calsCache: GoogleCalendar[] | undefined;
+
 export default function SettingsPage() {
   const { settings: ctxSettings, setSettings: setCtx, isOwner, user } = useApp();
   const toast = useToast();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [settings, setSettings] = useState<Settings>();
-  const [form, setForm] = useState<SettingsInput>();
+  // Start from the settings already loaded by the app shell so the page renders fully on its first frame
+  // (no skeleton → content swap during the page transition); load() below refreshes them.
+  const [settings, setSettings] = useState<Settings | undefined>(ctxSettings);
+  const [form, setForm] = useState<SettingsInput | undefined>(() => {
+    if (!ctxSettings) return undefined;
+    const { googleConnected: _g, googleEmail: _e, ...rest } = ctxSettings;
+    void _g;
+    void _e;
+    return { ...rest, busyRules: rest.busyRules ?? [] };
+  });
   const [error, setError] = useState<Error>();
   const [saving, setSaving] = useState(false);
-  const [cals, setCals] = useState<GoogleCalendar[]>();
+  const [cals, setCalsState] = useState<GoogleCalendar[] | undefined>(calsCache);
+  const setCals = (c: GoogleCalendar[] | undefined) => {
+    calsCache = c;
+    setCalsState(c);
+  };
   const [calsError, setCalsError] = useState('');
   const [gError, setGError] = useState('');
   const [gBusy, setGBusy] = useState(false);

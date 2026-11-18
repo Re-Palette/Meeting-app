@@ -13,7 +13,7 @@ import { useAsync } from '../lib/useAsync';
 
 export default function Team() {
   const { tz } = useApp();
-  const { data, error, loading, reload } = useAsync(() => api.contacts(), []);
+  const { data, error, loading, reload } = useAsync(() => api.contacts(), [], 'contacts');
   const [q, setQ] = useState('');
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();

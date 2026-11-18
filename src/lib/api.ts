@@ -1,3 +1,4 @@
+import { clearAsyncCache } from './useAsync';
 import type {
   AnalyticsData,
   AuthMe,
@@ -43,6 +44,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       /* ignore */
     }
     if (res.status === 401 && !path.startsWith('/auth') && !path.startsWith('/public')) {
+      clearAsyncCache();
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
     }
     throw new HttpError(res.status, message);
@@ -62,7 +64,10 @@ export type GoogleCalendar = { id: string; summary: string; primary: boolean };
 
 export const api = {
   login: (password: string) => post<{ ok: true }>('/auth/login', { password }),
-  logout: () => post<{ ok: true }>('/auth/logout'),
+  logout: () => {
+    clearAsyncCache();
+    return post<{ ok: true }>('/auth/logout');
+  },
   me: () => get<AuthMe>('/auth/me'),
 
   members: () => get<Member[]>('/members'),

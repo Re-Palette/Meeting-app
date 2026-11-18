@@ -26,7 +26,7 @@ function toInput(et: EventTypeWithStats) {
 export default function EventTypes() {
   const navigate = useNavigate();
   const toast = useToast();
-  const { data, error, loading, reload, setData } = useAsync(() => api.eventTypes(), []);
+  const { data, error, loading, reload, setData } = useAsync(() => api.eventTypes(), [], 'event-types');
 
   const toggle = async (et: EventTypeWithStats, active: boolean) => {
     setData((xs) => (xs ?? []).map((x) => (x.id === et.id ? { ...x, active } : x)));

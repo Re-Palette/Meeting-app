@@ -49,7 +49,7 @@ export default function Bookings() {
   const [q, setQ] = useState(params.get('q') ?? '');
   const { tz, pendingCount, refreshPending } = useApp();
   const toast = useToast();
-  const { data, error, loading, reload, setData } = useAsync(() => load(tab), [tab]);
+  const { data, error, loading, reload, setData } = useAsync(() => load(tab), [tab], `bookings:${tab}`);
   const [open, setOpen] = useState<Booking | null>(null);
   const [busy, setBusy] = useState('');
 

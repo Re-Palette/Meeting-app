@@ -155,7 +155,7 @@ function Heat({ values, labels, titles, color }: { values: number[]; labels: str
 }
 
 export default function Analytics() {
-  const { data, error, loading, reload } = useAsync(() => api.analytics(), []);
+  const { data, error, loading, reload } = useAsync(() => api.analytics(), [], 'analytics');
   const t = data?.totals;
   // Mon-first order for weekday strip
   const wdOrder = [1, 2, 3, 4, 5, 6, 0];

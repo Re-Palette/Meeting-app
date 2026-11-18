@@ -29,7 +29,7 @@ export function WeekSchedule({ refreshKey = 0 }: { refreshKey?: number }) {
   const from = zonedToUtc(mon.y, mon.m, mon.d, 0, 0, tz).toISOString();
   const nextMon = ymdAdd(mon, 7);
   const to = zonedToUtc(nextMon.y, nextMon.m, nextMon.d, 0, 0, tz).toISOString();
-  const { data, loading } = useAsync(() => api.calendarEvents(from, to), [from, to, refreshKey]);
+  const { data, loading } = useAsync(() => api.calendarEvents(from, to), [from, to, refreshKey], `calendar:${from}:${to}`);
 
   const placed = useMemo(() => {
     const out: { ev: CalendarEvent; col: number; top: number; height: number }[] = [];

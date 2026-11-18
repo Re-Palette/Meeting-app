@@ -31,6 +31,8 @@
   --red: #f0524f;
 
   --glass: rgba(255, 255, 255, 0.56);
+  /* Frosted fill used instead of a live backdrop blur on cards (much cheaper to animate). */
+  --glass-fill: linear-gradient(160deg, rgba(255, 255, 255, 0.8) 0%, rgba(250, 252, 254, 0.68) 55%, rgba(244, 248, 251, 0.62) 100%);
   --glass-strong: rgba(255, 255, 255, 0.74);
   --glass-soft: rgba(255, 255, 255, 0.36);
   --glass-border: rgba(255, 255, 255, 0.78);
@@ -118,6 +120,9 @@ p {
 .ambient {
   position: fixed;
   inset: 0;
+  contain: strict;
+  transform: translateZ(0);
+  will-change: transform;
   z-index: -1;
   overflow: hidden;
   background:
@@ -179,18 +184,14 @@ p {
 
 /* ---------- Glass primitives ---------- */
 .glass {
-  background: var(--glass);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
   border-radius: var(--radius);
 }
 
 .card {
-  background: var(--glass);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
   border-radius: var(--radius);
@@ -321,8 +322,6 @@ p {
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.9);
   box-shadow: 0 4px 14px -6px rgba(52, 76, 98, 0.2);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 .btn--glass:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.85);

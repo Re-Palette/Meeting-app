@@ -15,7 +15,7 @@ import { givenName, greeting } from '../lib/time';
 
 export default function Dashboard() {
   const { ownerName } = useApp();
-  const { data, error, reload } = useAsync(() => api.dashboard(), []);
+  const { data, error, reload } = useAsync(() => api.dashboard(), [], 'dashboard');
   const [open, setOpen] = useState<Booking | null>(null);
   const [weekKey, setWeekKey] = useState(0);
   const name = givenName(data?.ownerName || ownerName || '');

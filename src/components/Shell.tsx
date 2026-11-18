@@ -5,12 +5,27 @@ import type { CurrentUser, Settings } from '../../shared/types';
 import { api, UNAUTHORIZED_EVENT } from '../lib/api';
 import { AppContext } from '../lib/appContext';
 import { pageVariants } from '../lib/motion';
+import { primeAsyncCache } from '../lib/useAsync';
 import { browserTz } from '../lib/time';
 import { MobileNav, MobileTop, Sidebar } from './Sidebar';
 
 function Frozen({ children }: { children: ReactElement | null }) {
   const [el] = useState(children);
   return el;
+}
+
+// Warm the data cache for the other pages while the browser is idle, so the first visit to each page
+// renders its content immediately instead of swapping a skeleton for content mid-transition.
+function prefetchPages() {
+  const run = () => {
+    primeAsyncCache('event-types', () => api.eventTypes());
+    primeAsyncCache('bookings:upcoming', () => api.bookings({ status: 'confirmed', scope: 'upcoming' }));
+    primeAsyncCache('analytics', () => api.analytics());
+    primeAsyncCache('contacts', () => api.contacts());
+  };
+  const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(run, { timeout: 2000 });
+  else setTimeout(run, 800);
 }
 
 export function Shell() {
@@ -28,6 +43,7 @@ export function Shell() {
       .then((r) => {
         setUser(r.user ?? null);
         setAuth(r.authenticated ? 'ok' : 'no');
+        if (r.authenticated) prefetchPages();
       })
       .catch(() => setAuth('no'));
     const onUnauth = () => navigate('/login', { replace: true, state: { from: window.location.pathname } });
